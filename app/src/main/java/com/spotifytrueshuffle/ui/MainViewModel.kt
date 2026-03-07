@@ -165,7 +165,7 @@ class MainViewModel(
                 totalSteps = 5
             )
             try {
-                val tracks = repository.getArtistTopTracks(artist.id, market)
+                val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
                 if (tracks.isNotEmpty()) result[artist.id] = tracks
             } catch (e: retrofit2.HttpException) {
                 when (e.code()) {
@@ -175,7 +175,7 @@ class MainViewModel(
                         Log.w(TAG, "Rate limited on ${artist.name}, backing off…")
                         delay(2_000)
                         try {
-                            val tracks = repository.getArtistTopTracks(artist.id, market)
+                            val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
                             if (tracks.isNotEmpty()) result[artist.id] = tracks
                         } catch (e2: Exception) {
                             if (firstError == null) firstError = e2

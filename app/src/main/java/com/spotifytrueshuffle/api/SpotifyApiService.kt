@@ -44,16 +44,18 @@ interface SpotifyApiService {
     ): ArtistTopTracksResponse
 
     /**
-     * Returns Spotify track recommendations seeded from a single artist.
+     * Full-text search for tracks.
      * Used as a fallback when top-tracks returns 403 (known Spotify dev-mode quirk).
-     * seed_artists accepts a single artist ID (we call once per artist).
+     * Use q="artist:\"<name>\"" to restrict results to tracks by that artist.
+     * Returns full Track objects including popularity — compatible with our shuffle engine.
      */
-    @GET("recommendations")
-    suspend fun getRecommendations(
-        @Query("seed_artists") seedArtistId: String,
+    @GET("search")
+    suspend fun searchTracks(
+        @Query("q") query: String,
+        @Query("type") type: String = "track",
         @Query("market") market: String,
         @Query("limit") limit: Int = 10
-    ): RecommendationsResponse
+    ): SearchTracksResponse
 
     // ── Playlists ─────────────────────────────────────────────────────────────
 

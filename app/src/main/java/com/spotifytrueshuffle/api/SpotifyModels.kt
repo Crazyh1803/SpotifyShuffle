@@ -93,9 +93,9 @@ data class ArtistTopTracksResponse(
     val tracks: List<Track>
 )
 
-/** Response from GET /recommendations — same Track objects as top-tracks */
-data class RecommendationsResponse(
-    val tracks: List<Track>
+/** Response from GET /search (tracks) */
+data class SearchTracksResponse(
+    val tracks: PagingObject<Track>
 )
 
 data class SnapshotResponse(

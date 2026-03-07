@@ -72,28 +72,32 @@ class SpotifyRepository(
     /**
      * Returns up to 10 tracks for the artist.
      *
-     * Primary: GET /artists/{id}/top-tracks
-     * Fallback: GET /recommendations?seed_artists={id}  (used when top-tracks 403s —
-     *           a known restriction on some Spotify dev-mode apps)
+     * Primary:  GET /artists/{id}/top-tracks
+     * Fallback: GET /search?q=artist:"<name>"&type=track  (used when top-tracks 403s —
+     *           a known restriction on some Spotify dev-mode apps; the recommendations
+     *           endpoint was deprecated by Spotify in 2024 and no longer returns data)
      *
-     * Once top-tracks is found to be unavailable the fallback is used for ALL
+     * Once top-tracks is found to be unavailable the search fallback is used for ALL
      * subsequent artists in the same session (no wasted retry calls).
      */
-    suspend fun getArtistTopTracks(artistId: String, market: String): List<Track> {
+    suspend fun getArtistTopTracks(artistId: String, artistName: String, market: String): List<Track> {
         ensureValidToken()
         if (topTracksAvailable) {
             try {
                 return api.getArtistTopTracks(artistId, market).tracks
             } catch (e: retrofit2.HttpException) {
                 if (e.code() == 403) {
-                    Log.w(TAG, "top-tracks returned 403 — switching all artists to recommendations fallback")
+                    Log.w(TAG, "top-tracks returned 403 — switching all artists to search fallback")
                     topTracksAvailable = false
-                    // fall through to recommendations below
+                    // fall through to search below
                 } else throw e
             }
         }
-        // Fallback: recommendations seeded from this artist
-        return api.getRecommendations(seedArtistId = artistId, market = market).tracks
+        // Fallback: search for tracks by artist name.
+        // Strip quotes from the name so they don't break the query string.
+        val safeArtistName = artistName.replace("\"", "")
+        val query = "artist:\"$safeArtistName\""
+        return api.searchTracks(query = query, market = market).tracks.items
     }
 
     // ── Playlist ──────────────────────────────────────────────────────────────
