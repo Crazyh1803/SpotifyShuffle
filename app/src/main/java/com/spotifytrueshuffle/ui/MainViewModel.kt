@@ -71,12 +71,15 @@ class MainViewModel(
 
     fun buildPlaylist() {
         viewModelScope.launch {
+            var stepName = "initializing"
             try {
                 // Step 1: User profile
+                stepName = "getUserProfile"
                 progress("Getting your Spotify profile…", 1)
                 val user = repository.getUserProfile()
 
                 // Step 2: Followed artists
+                stepName = "getAllFollowedArtists"
                 progress("Loading your followed artists…", 2)
                 val followedArtists = repository.getAllFollowedArtists()
                 Log.d(TAG, "Followed artists: ${followedArtists.size}")
@@ -90,6 +93,7 @@ class MainViewModel(
                 }
 
                 // Step 3: Top artists (to identify tiers)
+                stepName = "getTopArtists"
                 progress("Identifying your listening tiers…", 3)
                 val topArtists = repository.getTopArtists()
                 val topArtistIds = topArtists.map { it.id }.toSet()
@@ -100,9 +104,11 @@ class MainViewModel(
                 // can happen when the token is missing user-read-private scope).
                 val market = user.country ?: "US"
                 Log.d(TAG, "User country: ${user.country}, using market: $market")
+                stepName = "fetchTracksForSample"
                 val tracksByArtist = fetchTracksForSample(followedArtists, topArtistIds, market)
 
                 // Step 5: Build playlist & save to Spotify
+                stepName = "savePlaylist"
                 progress("Assembling your true shuffle playlist…", 5)
                 val tracks = shuffleEngine.buildPlaylist(
                     followedArtists = followedArtists,
@@ -128,8 +134,14 @@ class MainViewModel(
                 )
 
             } catch (e: Exception) {
-                Log.e(TAG, "Playlist build failed", e)
-                _uiState.value = UiState.Error(e.message ?: "Something went wrong. Please try again.")
+                Log.e(TAG, "Playlist build failed at $stepName", e)
+                val msg = if (e is retrofit2.HttpException) {
+                    "HTTP ${e.code()} at step: $stepName\n\n" +
+                    "Tap Log Out & Re-authorize, make sure to tap Agree on the Spotify screen."
+                } else {
+                    e.message ?: "Something went wrong. Please try again."
+                }
+                _uiState.value = UiState.Error(msg)
             }
         }
     }
