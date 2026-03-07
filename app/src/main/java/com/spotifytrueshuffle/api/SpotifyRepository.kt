@@ -129,19 +129,28 @@ class SpotifyRepository(
 
     /**
      * Replaces the tracks in an existing playlist.
-     * Returns false if the playlist was deleted (404), so the caller can create a new one.
+     * Returns false ONLY for 404 (playlist deleted) so the caller can create a new one.
+     * Throws HttpException for any other error (e.g., 403 Forbidden) so failures are visible.
      */
     suspend fun replacePlaylistTracks(playlistId: String, trackUris: List<String>): Boolean {
         ensureValidToken()
         // Spotify accepts max 100 URIs per PUT call; our 2-hour playlist is ~30 tracks
+        Log.d(TAG, "replacePlaylistTracks: playlistId=$playlistId uris=${trackUris.size}")
         val response = api.replacePlaylistTracks(
             playlistId = playlistId,
             body = TracksBody(trackUris.take(100))
         )
         if (!response.isSuccessful) {
-            Log.w(TAG, "replacePlaylistTracks failed: ${response.code()}")
+            val body = try { response.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
+            Log.w(TAG, "replacePlaylistTracks failed: ${response.code()} — $body")
+            if (response.code() == 404) {
+                return false  // Playlist was deleted; caller will create a new one
+            }
+            // Any other failure (403, 400, etc.) — throw so it surfaces to the user
+            throw retrofit2.HttpException(response)
         }
-        return response.isSuccessful
+        Log.d(TAG, "replacePlaylistTracks succeeded for $playlistId")
+        return true
     }
 
     // ── Internals ─────────────────────────────────────────────────────────────

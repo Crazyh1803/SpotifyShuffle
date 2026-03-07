@@ -142,9 +142,7 @@ class MainViewModel(
                     Log.e(TAG, "HTTP ${e.code()} body at $stepName: $body")
                     when {
                         stepName == "savePlaylist" && e.code() == 403 ->
-                            "Spotify blocked playlist creation (403).\n\n" +
-                            "Please tap Log Out, then go to spotify.com/account/apps, " +
-                            "remove this app, tap Re-authorize and tap AGREE on the Spotify screen.\n\n" +
+                            "Spotify ${e.code()} at step: $stepName\n\n" +
                             "Diag: $body"
                         else ->
                             "HTTP ${e.code()} at step: $stepName\n\n" +
@@ -262,7 +260,13 @@ class MainViewModel(
      * the playlist doesn't create a new one each time.
      */
     private suspend fun savePlaylist(userId: String, tracks: List<Track>): String {
-        val uris = tracks.map { it.uri }
+        // Filter to valid Spotify track URIs (guards against null/empty from Gson on missing fields)
+        @Suppress("SENSELESS_COMPARISON")
+        val uris = tracks.map { it.uri }.filter { it != null && it.startsWith("spotify:track:") }
+        Log.d(TAG, "savePlaylist: ${tracks.size} tracks → ${uris.size} valid URIs")
+        if (uris.isEmpty()) {
+            throw Exception("No valid track URIs found. The fetched tracks may be malformed.\nTry tapping Build again.")
+        }
         val description = "True shuffle of ${tracks.flatMap { it.artists }.map { it.id }.toSet().size}" +
             " artists — generated ${LocalDate.now()}"
 
