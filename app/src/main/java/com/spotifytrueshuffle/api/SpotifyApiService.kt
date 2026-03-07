@@ -65,6 +65,17 @@ interface SpotifyApiService {
         @Query("offset") offset: Int = 0
     ): PagingObject<UserPlaylist>
 
+    /**
+     * Create a playlist for the authenticated user using the token's own identity.
+     * Preferred over POST users/{id}/playlists which 403s in Spotify dev mode
+     * for non-/me/ paths even when scopes are correctly granted.
+     */
+    @POST("me/playlists")
+    suspend fun createPlaylistForMe(
+        @Body request: CreatePlaylistRequest
+    ): Playlist
+
+    /** Legacy endpoint — kept as fallback in case me/playlists returns 404. */
     @POST("users/{userId}/playlists")
     suspend fun createPlaylist(
         @Path("userId") userId: String,

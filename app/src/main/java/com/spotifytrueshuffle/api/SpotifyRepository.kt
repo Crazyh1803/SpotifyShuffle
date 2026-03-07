@@ -104,14 +104,27 @@ class SpotifyRepository(
 
     suspend fun createPlaylist(userId: String, description: String): Playlist {
         ensureValidToken()
-        return api.createPlaylist(
-            userId = userId,
-            request = CreatePlaylistRequest(
-                name = com.spotifytrueshuffle.SpotifyConfig.PLAYLIST_NAME,
-                description = description,
-                isPublic = true   // public — requires only playlist-modify-public scope
-            )
+        val request = CreatePlaylistRequest(
+            name = com.spotifytrueshuffle.SpotifyConfig.PLAYLIST_NAME,
+            description = description,
+            isPublic = true   // public — requires only playlist-modify-public scope
         )
+
+        // Prefer POST /me/playlists — it uses the token identity directly and avoids
+        // the 403 that POST /users/{id}/playlists returns for non-/me/ paths in dev mode.
+        return try {
+            val playlist = api.createPlaylistForMe(request)
+            Log.d(TAG, "createPlaylistForMe succeeded: ${playlist.id}")
+            playlist
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404) {
+                // /me/playlists endpoint not available — fall back to user_id path
+                Log.w(TAG, "POST me/playlists → 404, falling back to users/{id}/playlists")
+                api.createPlaylist(userId = userId, request = request)
+            } else {
+                throw e
+            }
+        }
     }
 
     /**
