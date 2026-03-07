@@ -1,0 +1,26 @@
+# Built artifacts
+.gradle/
+build/
+app/build/
+captures/
+*.apk
+*.aab
+
+# Local configuration
+local.properties
+*.keystore
+*.jks
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Android Studio
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
