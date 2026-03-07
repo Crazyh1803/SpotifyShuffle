@@ -35,14 +35,25 @@ interface SpotifyApiService {
 
     /**
      * Returns up to 10 of the artist's most popular tracks.
-     * [market] is optional — when null (omitted), Spotify infers the market from
-     * the OAuth token, which is the correct behaviour for logged-in users.
+     * [market] is the ISO 3166-1 alpha-2 country code to resolve catalog availability.
      */
     @GET("artists/{id}/top-tracks")
     suspend fun getArtistTopTracks(
         @Path("id") artistId: String,
         @Query("market") market: String? = null
     ): ArtistTopTracksResponse
+
+    /**
+     * Returns Spotify track recommendations seeded from a single artist.
+     * Used as a fallback when top-tracks returns 403 (known Spotify dev-mode quirk).
+     * seed_artists accepts a single artist ID (we call once per artist).
+     */
+    @GET("recommendations")
+    suspend fun getRecommendations(
+        @Query("seed_artists") seedArtistId: String,
+        @Query("market") market: String,
+        @Query("limit") limit: Int = 10
+    ): RecommendationsResponse
 
     // ── Playlists ─────────────────────────────────────────────────────────────
 

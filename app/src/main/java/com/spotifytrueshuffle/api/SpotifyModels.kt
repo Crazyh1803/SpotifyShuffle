@@ -93,6 +93,11 @@ data class ArtistTopTracksResponse(
     val tracks: List<Track>
 )
 
+/** Response from GET /recommendations — same Track objects as top-tracks */
+data class RecommendationsResponse(
+    val tracks: List<Track>
+)
+
 data class SnapshotResponse(
     @SerializedName("snapshot_id") val snapshotId: String
 )

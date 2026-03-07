@@ -65,16 +65,35 @@ class SpotifyRepository(
         return topArtists
     }
 
+    // Latched to false the first time top-tracks returns 403 so all subsequent
+    // artists skip straight to the recommendations fallback (avoids 130 wasted calls).
+    private var topTracksAvailable = true
+
     /**
-     * Returns the artist's top 10 tracks.
-     * [market] should be the user's ISO 3166-1 alpha-2 country code (from getUserProfile).
-     * Passing it explicitly avoids a 403 on accounts where Spotify cannot infer the market
-     * from the token alone (e.g. some developer-mode apps).
-     * Throws on network/API errors so the caller can decide how to handle each failure.
+     * Returns up to 10 tracks for the artist.
+     *
+     * Primary: GET /artists/{id}/top-tracks
+     * Fallback: GET /recommendations?seed_artists={id}  (used when top-tracks 403s —
+     *           a known restriction on some Spotify dev-mode apps)
+     *
+     * Once top-tracks is found to be unavailable the fallback is used for ALL
+     * subsequent artists in the same session (no wasted retry calls).
      */
     suspend fun getArtistTopTracks(artistId: String, market: String): List<Track> {
         ensureValidToken()
-        return api.getArtistTopTracks(artistId, market).tracks
+        if (topTracksAvailable) {
+            try {
+                return api.getArtistTopTracks(artistId, market).tracks
+            } catch (e: retrofit2.HttpException) {
+                if (e.code() == 403) {
+                    Log.w(TAG, "top-tracks returned 403 — switching all artists to recommendations fallback")
+                    topTracksAvailable = false
+                    // fall through to recommendations below
+                } else throw e
+            }
+        }
+        // Fallback: recommendations seeded from this artist
+        return api.getRecommendations(seedArtistId = artistId, market = market).tracks
     }
 
     // ── Playlist ──────────────────────────────────────────────────────────────

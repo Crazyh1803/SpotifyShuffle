@@ -212,7 +212,7 @@ class MainViewModel(
                     } catch (_: Exception) { "(unreadable)" }
                     Log.e(TAG, "Spotify 403 body: $body")
                     when (e.code()) {
-                        403 -> "Spotify API 403 Forbidden.\n\nDiag: market=$market, body=$body\n\nTap Log Out and reconnect, making sure to tap 'Agree' on the Spotify permission screen."
+                        403 -> "Spotify API 403 Forbidden on both top-tracks and recommendations.\n\nDiag: market=$market\n\nPlease tap Log Out, go to spotify.com/account/apps, remove this app, then reconnect and tap Agree."
                         401 -> "Spotify session expired. Please log out and log back in."
                         429 -> "Spotify rate limit hit. Wait a minute and try again."
                         else -> "Spotify API error ${e.code()}: $body"
