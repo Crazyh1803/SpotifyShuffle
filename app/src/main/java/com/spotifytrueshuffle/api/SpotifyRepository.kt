@@ -72,7 +72,7 @@ class SpotifyRepository(
      * from the token alone (e.g. some developer-mode apps).
      * Throws on network/API errors so the caller can decide how to handle each failure.
      */
-    suspend fun getArtistTopTracks(artistId: String, market: String?): List<Track> {
+    suspend fun getArtistTopTracks(artistId: String, market: String): List<Track> {
         ensureValidToken()
         return api.getArtistTopTracks(artistId, market).tracks
     }

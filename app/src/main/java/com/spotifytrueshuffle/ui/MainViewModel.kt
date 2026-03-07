@@ -95,9 +95,12 @@ class MainViewModel(
                 val topArtistIds = topArtists.map { it.id }.toSet()
 
                 // Step 4: Fetch tracks (biggest step — rate-limit aware)
-                // Pass user.country explicitly so Spotify can resolve the correct regional
-                // catalog even for developer-mode apps that return 403 without a market param.
-                val tracksByArtist = fetchTracksForSample(followedArtists, topArtistIds, user.country)
+                // Always pass a non-null market so Spotify can resolve the correct regional
+                // catalog. Fall back to "US" if the profile didn't return a country (which
+                // can happen when the token is missing user-read-private scope).
+                val market = user.country ?: "US"
+                Log.d(TAG, "User country: ${user.country}, using market: $market")
+                val tracksByArtist = fetchTracksForSample(followedArtists, topArtistIds, market)
 
                 // Step 5: Build playlist & save to Spotify
                 progress("Assembling your true shuffle playlist…", 5)
@@ -145,7 +148,7 @@ class MainViewModel(
     private suspend fun fetchTracksForSample(
         followedArtists: List<Artist>,
         topArtistIds: Set<String>,
-        market: String?
+        market: String
     ): Map<String, List<Track>> {
         val tierA = followedArtists.filter { it.id in topArtistIds }.shuffled().take(50)
         val tierB = followedArtists.filter { it.id !in topArtistIds }.shuffled().take(80)
@@ -209,7 +212,7 @@ class MainViewModel(
                     } catch (_: Exception) { "(unreadable)" }
                     Log.e(TAG, "Spotify 403 body: $body")
                     when (e.code()) {
-                        403 -> "Spotify requires re-authorization.\n\nPlease tap Log Out below, then Connect with Spotify again to grant the updated permissions.\n\n(Technical: $body)"
+                        403 -> "Spotify API 403 Forbidden.\n\nDiag: market=$market, body=$body\n\nTap Log Out and reconnect, making sure to tap 'Agree' on the Spotify permission screen."
                         401 -> "Spotify session expired. Please log out and log back in."
                         429 -> "Spotify rate limit hit. Wait a minute and try again."
                         else -> "Spotify API error ${e.code()}: $body"
