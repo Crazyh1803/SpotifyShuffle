@@ -51,6 +51,11 @@ class SpotifyAuthManager(
             .appendQueryParameter("scope", SpotifyConfig.SCOPES)
             .appendQueryParameter("code_challenge_method", "S256")
             .appendQueryParameter("code_challenge", challenge)
+            // Force Spotify to always show the consent screen so the user explicitly
+            // grants the current scope list (including any newly-added scopes like
+            // user-read-private). Without this, Spotify silently reuses old consent
+            // and the new token may be missing scopes added after first auth.
+            .appendQueryParameter("show_dialog", "true")
             .build()
 
         Log.d(TAG, "Launching auth URL: $authUri")
@@ -139,5 +144,11 @@ class SpotifyAuthManager(
         if (json.has("refresh_token")) {
             tokenStorage.refreshToken = json.getString("refresh_token")
         }
+
+        // Log the scopes actually granted by Spotify so we can verify user-read-private
+        // is present. If it's missing, the artists/{id}/top-tracks call will 403.
+        val grantedScopes = if (json.has("scope")) json.getString("scope") else "(not returned)"
+        Log.d(TAG, "Granted scopes: $grantedScopes")
+        Log.d(TAG, "user-read-private present: ${grantedScopes.contains("user-read-private")}")
     }
 }

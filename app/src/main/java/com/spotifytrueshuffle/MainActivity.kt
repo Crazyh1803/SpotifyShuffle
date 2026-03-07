@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
 
     private fun buildApiService(tokenStorage: TokenStorage): SpotifyApiService {
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
+            level = HttpLoggingInterceptor.Level.BODY
         }
 
         val client = OkHttpClient.Builder()
