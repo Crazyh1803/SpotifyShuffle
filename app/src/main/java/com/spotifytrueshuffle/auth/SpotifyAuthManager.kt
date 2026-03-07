@@ -145,10 +145,11 @@ class SpotifyAuthManager(
             tokenStorage.refreshToken = json.getString("refresh_token")
         }
 
-        // Log the scopes actually granted by Spotify so we can verify user-read-private
-        // is present. If it's missing, the artists/{id}/top-tracks call will 403.
+        // Persist the scopes Spotify actually granted so we can surface them in error messages.
         val grantedScopes = if (json.has("scope")) json.getString("scope") else "(not returned)"
+        tokenStorage.grantedScopes = grantedScopes
         Log.d(TAG, "Granted scopes: $grantedScopes")
+        Log.d(TAG, "playlist-modify-public present: ${grantedScopes.contains("playlist-modify-public")}")
         Log.d(TAG, "user-read-private present: ${grantedScopes.contains("user-read-private")}")
     }
 }

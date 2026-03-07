@@ -278,7 +278,24 @@ class MainViewModel(
             tokenStorage.playlistId = null
         }
 
-        val playlist = repository.createPlaylist(userId, description)
+        val playlist = try {
+            repository.createPlaylist(userId, description)
+        } catch (e: retrofit2.HttpException) {
+            val body = try { e.response()?.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
+            val scopes = tokenStorage.grantedScopes ?: "(not stored — log out and re-authorize)"
+            val hasPublic  = scopes.contains("playlist-modify-public")
+            val hasPrivate = scopes.contains("playlist-modify-private")
+            Log.e(TAG, "createPlaylist ${e.code()}: userId=$userId scopes=$scopes body=$body")
+            // Throw a plain Exception so the outer catch surfaces our diagnostic as the message
+            throw Exception(
+                "Spotify ${e.code()} on createPlaylist.\n\n" +
+                "userId: $userId\n" +
+                "playlist-modify-public granted: $hasPublic\n" +
+                "playlist-modify-private granted: $hasPrivate\n\n" +
+                "All granted scopes:\n$scopes\n\n" +
+                "Diag: $body"
+            )
+        }
         tokenStorage.playlistId = playlist.id
         repository.replacePlaylistTracks(playlist.id, uris)
         Log.d(TAG, "New playlist created: ${playlist.id}")

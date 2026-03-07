@@ -44,6 +44,11 @@ class TokenStorage(context: Context) {
         get() = prefs.getString(KEY_PLAYLIST_ID, null)
         set(value) = prefs.edit().putString(KEY_PLAYLIST_ID, value).apply()
 
+    /** The scope string Spotify actually returned in the last token exchange (for diagnostics). */
+    var grantedScopes: String?
+        get() = prefs.getString(KEY_GRANTED_SCOPES, null)
+        set(value) = prefs.edit().putString(KEY_GRANTED_SCOPES, value).apply()
+
     /**
      * Returns true if we have an access token that won't expire for at least 60 seconds.
      */
@@ -69,5 +74,6 @@ class TokenStorage(context: Context) {
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_TOKEN_EXPIRY = "token_expiry"
         const val KEY_PLAYLIST_ID = "playlist_id"
+        const val KEY_GRANTED_SCOPES = "granted_scopes"
     }
 }
