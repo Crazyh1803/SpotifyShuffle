@@ -109,7 +109,7 @@ class SpotifyRepository(
             request = CreatePlaylistRequest(
                 name = com.spotifytrueshuffle.SpotifyConfig.PLAYLIST_NAME,
                 description = description,
-                isPublic = false
+                isPublic = true   // public — requires only playlist-modify-public scope
             )
         )
     }

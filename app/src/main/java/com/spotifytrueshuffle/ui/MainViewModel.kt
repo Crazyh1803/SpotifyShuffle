@@ -136,8 +136,20 @@ class MainViewModel(
             } catch (e: Exception) {
                 Log.e(TAG, "Playlist build failed at $stepName", e)
                 val msg = if (e is retrofit2.HttpException) {
-                    "HTTP ${e.code()} at step: $stepName\n\n" +
-                    "Tap Log Out & Re-authorize, make sure to tap Agree on the Spotify screen."
+                    val body = try {
+                        e.response()?.errorBody()?.string() ?: "(no body)"
+                    } catch (_: Exception) { "(unreadable)" }
+                    Log.e(TAG, "HTTP ${e.code()} body at $stepName: $body")
+                    when {
+                        stepName == "savePlaylist" && e.code() == 403 ->
+                            "Spotify blocked playlist creation (403).\n\n" +
+                            "Please tap Log Out, then go to spotify.com/account/apps, " +
+                            "remove this app, tap Re-authorize and tap AGREE on the Spotify screen.\n\n" +
+                            "Diag: $body"
+                        else ->
+                            "HTTP ${e.code()} at step: $stepName\n\n" +
+                            "Tap Log Out & Re-authorize, make sure to tap Agree on the Spotify screen."
+                    }
                 } else {
                     e.message ?: "Something went wrong. Please try again."
                 }
