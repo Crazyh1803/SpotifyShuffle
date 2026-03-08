@@ -119,7 +119,7 @@ class SpotifyRepository(
         val request = CreatePlaylistRequest(
             name = com.spotifytrueshuffle.SpotifyConfig.PLAYLIST_NAME,
             description = description,
-            isPublic = true   // public — requires only playlist-modify-public scope
+            isPublic = false  // private — uses playlist-modify-private; avoids 403s on public playlists in dev mode
         )
 
         // Prefer POST /me/playlists — it uses the token identity directly and avoids

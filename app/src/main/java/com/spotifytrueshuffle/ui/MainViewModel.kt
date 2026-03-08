@@ -248,10 +248,24 @@ class MainViewModel(
         Log.d(TAG, "New playlist created: ${playlist.id}")
 
         // ── Populate it — try PUT first, fall back to POST ────────────────────
-        val replaced = repository.replacePlaylistTracks(playlist.id, uris)
-        if (!replaced) {
-            Log.w(TAG, "PUT /playlists/${playlist.id}/tracks returned 403 — trying POST fallback")
-            repository.addTracksToPlaylist(playlist.id, uris)
+        try {
+            val replaced = repository.replacePlaylistTracks(playlist.id, uris)
+            if (!replaced) {
+                Log.w(TAG, "PUT /playlists/${playlist.id}/tracks returned 403 — trying POST fallback")
+                repository.addTracksToPlaylist(playlist.id, uris)
+            }
+        } catch (e: retrofit2.HttpException) {
+            val body = try { e.response()?.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
+            val scopes = tokenStorage.grantedScopes ?: "(not stored)"
+            val hasModPub  = scopes.contains("playlist-modify-public")
+            val hasModPriv = scopes.contains("playlist-modify-private")
+            Log.e(TAG, "addTracks ${e.code()}: playlistId=${playlist.id} scopes=$scopes body=$body")
+            throw Exception(
+                "Spotify ${e.code()} — tracks couldn't be added to playlist.\n\n" +
+                "Tap \"Log Out & Re-authorize\" below, then Build again.\n\n" +
+                "modify-public=$hasModPub  modify-private=$hasModPriv\n" +
+                "Diag: $body"
+            )
         }
 
         return playlist.externalUrls?.spotify ?: "https://open.spotify.com/playlist/${playlist.id}"
