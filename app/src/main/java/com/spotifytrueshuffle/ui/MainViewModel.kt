@@ -162,18 +162,18 @@ class MainViewModel(
      * Fetches top tracks for a representative sample of the user's followed artists.
      *
      * Rate-limit strategy:
-     * - Up to 50 Tier-A + 80 Tier-B artists sampled (130 requests max)
-     * - 1-second pause every 25 requests
-     * - Per-artist failures are skipped, but the real error is captured and thrown
-     *   if ALL artists fail so we surface the root cause instead of a vague message.
+     * - Up to 20 Tier-A + 30 Tier-B artists sampled (50 requests max)
+     * - 350 ms delay after EVERY request (≈ 2.8 calls/sec — well under Spotify limits)
+     * - On 429: read Retry-After header, wait that long + 1s buffer, then retry once
+     * - Per-artist failures are skipped; root cause thrown only if ALL artists fail
      */
     private suspend fun fetchTracksForSample(
         followedArtists: List<Artist>,
         topArtistIds: Set<String>,
         market: String
     ): Map<String, List<Track>> {
-        val tierA = followedArtists.filter { it.id in topArtistIds }.shuffled().take(50)
-        val tierB = followedArtists.filter { it.id !in topArtistIds }.shuffled().take(80)
+        val tierA = followedArtists.filter { it.id in topArtistIds }.shuffled().take(20)
+        val tierB = followedArtists.filter { it.id !in topArtistIds }.shuffled().take(30)
         val sample = (tierA + tierB).shuffled()
 
         val result = mutableMapOf<String, List<Track>>()
@@ -193,9 +193,11 @@ class MainViewModel(
                 when (e.code()) {
                     404 -> Log.d(TAG, "Artist ${artist.name} not found, skipping")
                     429 -> {
-                        // Rate-limited — back off 2 s and retry once
-                        Log.w(TAG, "Rate limited on ${artist.name}, backing off…")
-                        delay(2_000)
+                        // Read Retry-After header; default to 10s if missing
+                        val retryAfterSec = e.response()
+                            ?.headers()?.get("Retry-After")?.toLongOrNull() ?: 10L
+                        Log.w(TAG, "Rate limited on ${artist.name} — waiting ${retryAfterSec + 1}s (Retry-After=$retryAfterSec)")
+                        delay((retryAfterSec + 1L) * 1_000L)
                         try {
                             val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
                             if (tracks.isNotEmpty()) result[artist.id] = tracks
@@ -218,8 +220,8 @@ class MainViewModel(
                 skipCount++
             }
 
-            // Brief pause every 25 requests
-            if ((index + 1) % 25 == 0) delay(1_000)
+            // 350 ms between every request keeps us well under Spotify's rate limit
+            delay(350)
         }
 
         Log.d(TAG, "Tracks fetched for ${result.size} / ${sample.size} artists ($skipCount skipped)")
