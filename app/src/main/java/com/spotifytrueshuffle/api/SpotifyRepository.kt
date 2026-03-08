@@ -7,6 +7,21 @@ import com.spotifytrueshuffle.auth.TokenStorage
 private const val TAG = "SpotifyRepository"
 
 /**
+ * Carries an HTTP error code, the response body, and selected response headers
+ * all the way up to the UI layer without double-reading the OkHttp buffer.
+ *
+ * Background: OkHttp's ResponseBody.string() can only be called once. If we read
+ * it inside the repository (to log it) and then throw retrofit2.HttpException, the
+ * caller can't read the body again — it comes back empty. This class sidesteps that
+ * by embedding the already-read body in the exception itself.
+ */
+class SpotifyApiError(
+    val httpCode: Int,
+    val responseBody: String,
+    val responseHeaders: String
+) : Exception("Spotify $httpCode: $responseBody")
+
+/**
  * Single source of truth for all Spotify data.
  * Handles pagination, token refresh, and error recovery.
  */
@@ -152,10 +167,12 @@ class SpotifyRepository(
             body = TracksBody(trackUris.take(100))
         )
         if (!response.isSuccessful) {
+            val code = response.code()
             val body = try { response.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
-            Log.w(TAG, "replacePlaylistTracks failed: ${response.code()} — $body")
-            if (response.code() == 404 || response.code() == 403) return false
-            throw retrofit2.HttpException(response)
+            val headers = captureKeyHeaders(response.headers())
+            Log.w(TAG, "replacePlaylistTracks $code — body=$body headers=$headers")
+            if (code == 404 || code == 403) return false
+            throw SpotifyApiError(code, body, headers)
         }
         Log.d(TAG, "replacePlaylistTracks succeeded for $playlistId")
         return true
@@ -164,7 +181,7 @@ class SpotifyRepository(
     /**
      * Appends tracks to a playlist via POST /playlists/{id}/tracks.
      * Used as a fallback when PUT (replacePlaylistTracks) is blocked (403).
-     * Returns true on success, throws on error.
+     * Returns true on success, throws SpotifyApiError on error.
      */
     suspend fun addTracksToPlaylist(playlistId: String, trackUris: List<String>): Boolean {
         ensureValidToken()
@@ -174,12 +191,33 @@ class SpotifyRepository(
             body = TracksBody(trackUris.take(100))
         )
         if (!response.isSuccessful) {
+            val code = response.code()
             val body = try { response.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
-            Log.w(TAG, "addTracksToPlaylist failed: ${response.code()} — $body")
-            throw retrofit2.HttpException(response)
+            val headers = captureKeyHeaders(response.headers())
+            Log.w(TAG, "addTracksToPlaylist $code — body=$body headers=$headers")
+            throw SpotifyApiError(code, body, headers)
         }
         Log.d(TAG, "addTracksToPlaylist succeeded for $playlistId")
         return true
+    }
+
+    /** Extracts the most diagnostic response headers into a compact string for error display. */
+    private fun captureKeyHeaders(headers: okhttp3.Headers): String {
+        // These headers reveal whether the rejection came from Spotify's API servers,
+        // a CDN (Cloudflare), or a proxy (WAF/load balancer).
+        val interesting = listOf(
+            "www-authenticate",   // bearer realm + error — reveals token validation failure
+            "content-type",       // application/json from Spotify; text/html from a proxy
+            "cf-ray",             // Cloudflare ray ID — present if Cloudflare rejected
+            "x-request-id",       // Spotify request ID — present if Spotify's API handled it
+            "retry-after",        // rate limit disguised as 403
+            "x-content-type-options"
+        )
+        return headers.toMultimap()
+            .filterKeys { it.lowercase() in interesting }
+            .entries
+            .joinToString(" | ") { (k, v) -> "$k: ${v.joinToString()}" }
+            .ifEmpty { "(no key headers)" }
     }
 
     // ── Internals ─────────────────────────────────────────────────────────────

@@ -254,17 +254,17 @@ class MainViewModel(
                 Log.w(TAG, "PUT /playlists/${playlist.id}/tracks returned 403 — trying POST fallback")
                 repository.addTracksToPlaylist(playlist.id, uris)
             }
-        } catch (e: retrofit2.HttpException) {
-            val body = try { e.response()?.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
+        } catch (e: com.spotifytrueshuffle.api.SpotifyApiError) {
             val scopes = tokenStorage.grantedScopes ?: "(not stored)"
             val hasModPub  = scopes.contains("playlist-modify-public")
             val hasModPriv = scopes.contains("playlist-modify-private")
-            Log.e(TAG, "addTracks ${e.code()}: playlistId=${playlist.id} scopes=$scopes body=$body")
+            Log.e(TAG, "addTracks ${e.httpCode}: playlistId=${playlist.id} scopes=$scopes body=${e.responseBody} headers=${e.responseHeaders}")
             throw Exception(
-                "Spotify ${e.code()} — tracks couldn't be added to playlist.\n\n" +
+                "Spotify ${e.httpCode} — tracks couldn't be added to playlist.\n\n" +
                 "Tap \"Log Out & Re-authorize\" below, then Build again.\n\n" +
                 "modify-public=$hasModPub  modify-private=$hasModPriv\n" +
-                "Diag: $body"
+                "Body: ${e.responseBody}\n" +
+                "Headers: ${e.responseHeaders}"
             )
         }
 
