@@ -65,39 +65,15 @@ class SpotifyRepository(
         return topArtists
     }
 
-    // Latched to false the first time top-tracks returns 403 so all subsequent
-    // artists skip straight to the recommendations fallback (avoids 130 wasted calls).
-    private var topTracksAvailable = true
-
     /**
-     * Returns up to 10 tracks for the artist.
-     *
-     * Primary:  GET /artists/{id}/top-tracks
-     * Fallback: GET /search?q=artist:"<name>"&type=track  (used when top-tracks 403s —
-     *           a known restriction on some Spotify dev-mode apps; the recommendations
-     *           endpoint was deprecated by Spotify in 2024 and no longer returns data)
-     *
-     * Once top-tracks is found to be unavailable the search fallback is used for ALL
-     * subsequent artists in the same session (no wasted retry calls).
+     * Returns up to 10 top tracks for the artist via GET /artists/{id}/top-tracks.
+     * All errors (403, 429, etc.) propagate to the caller so they can be counted
+     * and handled with appropriate retry/skip logic.
      */
     suspend fun getArtistTopTracks(artistId: String, artistName: String, market: String): List<Track> {
         ensureValidToken()
-        if (topTracksAvailable) {
-            try {
-                return api.getArtistTopTracks(artistId, market).tracks
-            } catch (e: retrofit2.HttpException) {
-                if (e.code() == 403) {
-                    Log.w(TAG, "top-tracks returned 403 — switching all artists to search fallback")
-                    topTracksAvailable = false
-                    // fall through to search below
-                } else throw e
-            }
-        }
-        // Fallback: search for tracks by artist name.
-        // Strip quotes from the name so they don't break the query string.
-        val safeArtistName = artistName.replace("\"", "")
-        val query = "artist:\"$safeArtistName\""
-        return api.searchTracks(query = query, market = market).tracks.items
+        Log.d(TAG, "top-tracks → $artistName ($artistId)")
+        return api.getArtistTopTracks(artistId, market).tracks
     }
 
     // ── Playlist ──────────────────────────────────────────────────────────────
