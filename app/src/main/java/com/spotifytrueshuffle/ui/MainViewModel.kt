@@ -29,7 +29,7 @@ private const val TAG = "MainViewModel"
 private const val TIER_A_SAMPLE = 6   // top/frequent artists
 private const val TIER_B_SAMPLE = 9   // followed but not top
 private const val TRACK_FETCH_DELAY_MS = 1_000L
-private const val RATE_LIMIT_MAX_WAIT_SEC = 3L  // skip artist if Retry-After > this
+private const val RATE_LIMIT_MAX_WAIT_SEC = 60L  // skip artist if Retry-After > this
 
 class MainViewModel(
     private val authManager: SpotifyAuthManager,
@@ -246,9 +246,13 @@ class MainViewModel(
                     404 -> Log.d(TAG, "Artist ${artist.name} not found, skipping")
                     429 -> {
                         val retryAfterSec = e.response()
-                            ?.headers()?.get("Retry-After")?.toLongOrNull() ?: 2L
+                            ?.headers()?.get("Retry-After")?.toLongOrNull() ?: 5L
                         if (retryAfterSec <= RATE_LIMIT_MAX_WAIT_SEC) {
-                            Log.w(TAG, "Rate limited on ${artist.name} — short wait ${retryAfterSec}s, retrying")
+                            Log.w(TAG, "Rate limited on ${artist.name} — waiting ${retryAfterSec}s, retrying")
+                            progress(
+                                "Spotify rate limit — resuming in ${retryAfterSec}s…",
+                                progressStep, progressTotal
+                            )
                             delay(retryAfterSec * 1_000L)
                             try {
                                 val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
@@ -257,8 +261,7 @@ class MainViewModel(
                                 Log.w(TAG, "Retry failed for ${artist.name}, skipping")
                             }
                         } else {
-                            // Long wait — skip this artist rather than blocking for 30-60s
-                            Log.w(TAG, "Rate limited on ${artist.name} (Retry-After=${retryAfterSec}s > threshold) — skipping")
+                            Log.w(TAG, "Rate limited on ${artist.name} (Retry-After=${retryAfterSec}s > ${RATE_LIMIT_MAX_WAIT_SEC}s threshold) — skipping")
                         }
                     }
                     else -> Log.w(TAG, "HTTP ${e.code()} for ${artist.name}, skipping")
