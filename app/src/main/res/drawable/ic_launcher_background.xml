@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon background: matches the dark-purple base of shuffle_all_icon.svg -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#1DB954" />
+    <solid android:color="#1a0533" />
 </shape>
