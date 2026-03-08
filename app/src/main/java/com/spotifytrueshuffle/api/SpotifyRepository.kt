@@ -23,6 +23,26 @@ class SpotifyApiError(
 ) : Exception("Spotify $httpCode: $responseBody")
 
 /**
+ * Output of [SpotifyRepository.buildTrackPool].
+ *
+ * @param tracksByArtist      artistId → de-duplicated list of their tracks
+ * @param discoveryArtistIds  artists whose tracks came ONLY from the gap-fill
+ *                            source (GET /artists/{id}/top-tracks). These are
+ *                            artists the user follows but has never liked or saved
+ *                            anything from — pure discovery candidates for the
+ *                            shuffle engine's Tier C.
+ * @param likedTrackIds       track IDs that came from the user's liked-songs list
+ *                            (GET /me/tracks, source 2). Used by the shuffle engine
+ *                            to prefer non-liked tracks when selecting songs for
+ *                            Tier B and Tier C artists.
+ */
+data class TrackPool(
+    val tracksByArtist: Map<String, List<Track>>,
+    val discoveryArtistIds: Set<String>,
+    val likedTrackIds: Set<String>
+)
+
+/**
  * Single source of truth for all Spotify data.
  * Handles pagination, token refresh, and error recovery.
  */
@@ -97,10 +117,17 @@ class SpotifyRepository(
      *
      * @param followedArtistIds IDs of all followed artists; used to identify gap
      *                          artists for source 4. Pass empty to skip source 4.
+     * @param topArtistIds      IDs of the user's top artists (Tier A). Used in
+     *                          source 4b to decide which non-top artists to supplement
+     *                          with fresh top-tracks. Pass empty to skip source 4b.
      */
-    suspend fun buildTrackPool(followedArtistIds: List<String> = emptyList()): Map<String, List<Track>> {
+    suspend fun buildTrackPool(
+        followedArtistIds: List<String> = emptyList(),
+        topArtistIds: Set<String> = emptySet()
+    ): TrackPool {
         ensureValidToken()
         val trackMap = mutableMapOf<String, MutableList<Track>>()
+        val likedTrackIds = mutableSetOf<String>()
 
         fun addTrack(track: Track) {
             val artistId = track.artists.firstOrNull()?.id ?: return
@@ -116,12 +143,17 @@ class SpotifyRepository(
             }
         }
 
-        // 2. Saved ("liked") tracks — paginated, cap at 500
+        // 2. Saved ("liked") tracks — paginated, cap at 500.
+        //    Track IDs collected here go into likedTrackIds so the shuffle engine
+        //    can de-prioritise them for non-top artists in favour of fresh tracks.
         var offset = 0
         while (offset < 500) {
             try {
                 val page = api.getSavedTracks(limit = 50, offset = offset)
-                page.items.forEach { addTrack(it.track) }
+                page.items.forEach {
+                    addTrack(it.track)
+                    likedTrackIds.add(it.track.id)
+                }
                 offset += page.items.size
                 if (page.next == null || page.items.isEmpty()) break
             } catch (e: retrofit2.HttpException) {
@@ -167,6 +199,9 @@ class SpotifyRepository(
         //      endpoint for many apps; early bail avoids pointless retries.
         //    • 150 ms between calls keeps us inside Spotify's rate limit.
         //    • Cap at 50 gap artists to keep load time bounded (~7 s worst case).
+        //    • Artist IDs that successfully get tracks here are returned as discoveryArtistIds
+        //      so the shuffle engine can put them in a dedicated high-priority Tier C.
+        val discoveryArtistIds = mutableSetOf<String>()
         if (followedArtistIds.isNotEmpty()) {
             val gapArtistIds = followedArtistIds
                 .filter { it !in trackMap.keys }
@@ -182,17 +217,50 @@ class SpotifyRepository(
                     delay(150)
                     val response = api.getArtistTopTracks(artistId = artistId)
                     response.tracks.forEach { addTrack(it) }
+                    if (response.tracks.isNotEmpty()) discoveryArtistIds.add(artistId)
                     consecutiveForbidden = 0
                 } catch (e: retrofit2.HttpException) {
                     if (e.code() == 403) consecutiveForbidden++ else consecutiveForbidden = 0
                     Log.w(TAG, "getArtistTopTracks($artistId) ${e.code()}")
                 }
             }
+            Log.d(TAG, "Discovery artists (gap-filled): ${discoveryArtistIds.size}")
+        }
+
+        // 4b. Supplement Tier-B artists (in pool, not a top artist, not already discovery) with
+        //     their Spotify top-tracks. This gives the shuffle engine non-liked track options for
+        //     "familiar but not top" artists, so selectTrack can serve something fresher than the
+        //     same liked songs. Capped at 40 artists; same 150 ms pacing and 3× 403 bail as above.
+        if (topArtistIds.isNotEmpty()) {
+            val tierBCandidates = followedArtistIds
+                .filter { it in trackMap && it !in topArtistIds && it !in discoveryArtistIds }
+                .take(40)
+            Log.d(TAG, "Tier-B supplement: ${tierBCandidates.size} artists")
+            var tierBConsecutiveForbidden = 0
+            for (artistId in tierBCandidates) {
+                if (tierBConsecutiveForbidden >= 3) {
+                    Log.w(TAG, "Stopping Tier-B supplement: 3 consecutive 403s")
+                    break
+                }
+                try {
+                    delay(150)
+                    val response = api.getArtistTopTracks(artistId = artistId)
+                    response.tracks.forEach { addTrack(it) }
+                    tierBConsecutiveForbidden = 0
+                } catch (e: retrofit2.HttpException) {
+                    if (e.code() == 403) tierBConsecutiveForbidden++ else tierBConsecutiveForbidden = 0
+                    Log.w(TAG, "getArtistTopTracks(tierB/$artistId) ${e.code()}")
+                }
+            }
         }
 
         val result = trackMap.mapValues { (_, tracks) -> tracks.distinctBy { it.id } }
         Log.d(TAG, "Track pool: ${result.values.sumOf { it.size }} tracks for ${result.size} artists")
-        return result
+        return TrackPool(
+            tracksByArtist = result,
+            discoveryArtistIds = discoveryArtistIds,
+            likedTrackIds = likedTrackIds
+        )
     }
 
     // ── Playlist ──────────────────────────────────────────────────────────────

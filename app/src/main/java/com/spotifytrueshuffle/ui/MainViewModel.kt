@@ -12,6 +12,7 @@ import com.spotifytrueshuffle.auth.SpotifyAuthManager
 import com.spotifytrueshuffle.auth.TokenStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
+import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,7 +30,8 @@ class MainViewModel(
     private val repository: SpotifyRepository,
     private val tokenStorage: TokenStorage,
     private val shuffleEngine: TrueShuffleEngine,
-    private val artistCache: ArtistTrackCache
+    private val artistCache: ArtistTrackCache,
+    private val historyStorage: ShuffleHistoryStorage
 ) : ViewModel() {
 
     sealed class UiState {
@@ -52,8 +54,19 @@ class MainViewModel(
     private val _uiState = MutableStateFlow<UiState>(UiState.NotLoggedIn)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
+    /** How many past playlists an artist/track must skip before being eligible again (1–10). */
+    private val _cooldownCount = MutableStateFlow(historyStorage.load().cooldownPlaylists)
+    val cooldownCount: StateFlow<Int> = _cooldownCount.asStateFlow()
+
     init {
         _uiState.value = if (authManager.isLoggedIn()) loggedInState() else UiState.NotLoggedIn
+    }
+
+    /** Updates the cooldown setting and persists it immediately. */
+    fun setCooldownCount(n: Int) {
+        val clamped = n.coerceIn(1, 10)
+        _cooldownCount.value = clamped
+        historyStorage.saveCooldownCount(clamped)
     }
 
     // ── Auth ─────────────────────────────────────────────────────────────────
@@ -117,10 +130,15 @@ class MainViewModel(
                 // Step 3 — build track pool (library sources + gap-artist top-tracks)
                 stepName = "buildTrackPool"
                 progress("Scanning your Spotify library for tracks…", 3, 4)
-                val tracksByArtist = repository.buildTrackPool(
-                    followedArtistIds = library.followedArtists.map { it.id }
+                val topArtistIds = library.topArtistIds.toSet()   // needed by buildTrackPool (source 4b)
+                val trackPool = repository.buildTrackPool(
+                    followedArtistIds = library.followedArtists.map { it.id },
+                    topArtistIds = topArtistIds
                 )
-                Log.d(TAG, "Track pool covers ${tracksByArtist.size} artists")
+                val tracksByArtist = trackPool.tracksByArtist
+                Log.d(TAG, "Track pool covers ${tracksByArtist.size} artists " +
+                    "(${trackPool.discoveryArtistIds.size} discovery, " +
+                    "${trackPool.likedTrackIds.size} liked track IDs)")
 
                 if (tracksByArtist.isEmpty()) {
                     _uiState.value = UiState.Error(
@@ -133,11 +151,22 @@ class MainViewModel(
                 // Step 4 — shuffle + save to Spotify
                 stepName = "savePlaylist"
                 progress("Assembling your true shuffle playlist…", 4, 4)
-                val topArtistIds = library.topArtistIds.toSet()
+
+                // Load cooldown sets: track/artist IDs from the last N playlists are
+                // suppressed so the same songs/artists don't repeat every build.
+                val history = historyStorage.load()
+                val cooldown = historyStorage.getCooldownSets(history.cooldownPlaylists, history)
+                Log.d(TAG, "Cooldown N=${history.cooldownPlaylists}: " +
+                    "${cooldown.first.size} tracks, ${cooldown.second.size} artists suppressed")
+
                 val tracks = shuffleEngine.buildPlaylist(
                     followedArtists = library.followedArtists,
                     topArtistIds = topArtistIds,
                     tracksByArtist = tracksByArtist,
+                    discoveryArtistIds = trackPool.discoveryArtistIds,
+                    likedTrackIds = trackPool.likedTrackIds,
+                    cooldownTrackIds = cooldown.first,
+                    cooldownArtistIds = cooldown.second,
                     targetDurationMs = SpotifyConfig.TARGET_DURATION_MS
                 )
 
@@ -150,6 +179,11 @@ class MainViewModel(
                 }
 
                 val playlistUrl = savePlaylist(user.id, tracks)
+
+                // Record this playlist so future builds avoid repeating its songs/artists.
+                val playlistTrackIds = tracks.map { it.id }
+                val playlistArtistIds = tracks.flatMap { it.artists }.map { it.id }.distinct()
+                historyStorage.recordPlaylist(playlistTrackIds, playlistArtistIds, history.cooldownPlaylists)
                 val totalDurationMs = tracks.sumOf { it.durationMs.toLong() }
                 val artistsRepresented = tracks.flatMap { it.artists }.map { it.id }.toSet().size
 
@@ -311,9 +345,10 @@ class MainViewModelFactory(
     private val repository: SpotifyRepository,
     private val tokenStorage: TokenStorage,
     private val shuffleEngine: TrueShuffleEngine,
-    private val trackCache: ArtistTrackCache
+    private val trackCache: ArtistTrackCache,
+    private val historyStorage: ShuffleHistoryStorage
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache) as T
+        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage) as T
 }

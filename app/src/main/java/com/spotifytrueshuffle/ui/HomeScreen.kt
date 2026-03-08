@@ -176,10 +176,70 @@ private fun LoggedInContent(
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+        CooldownStepper(viewModel)
+
+        Spacer(modifier = Modifier.height(8.dp))
         TextButton(onClick = { viewModel.logout() }) {
             Text("Log out", color = SpotifyLightGray.copy(alpha = 0.5f))
         }
+    }
+}
+
+/**
+ * A small inline stepper that lets the user choose how many past playlists
+ * must pass before an artist or track is eligible to appear again.
+ *
+ *   Repeat cooldown:  [−]  5  [+]  playlists
+ */
+@Composable
+private fun CooldownStepper(viewModel: MainViewModel) {
+    val count by viewModel.cooldownCount.collectAsState()
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = "Repeat cooldown:",
+            color = SpotifyLightGray.copy(alpha = 0.7f),
+            fontSize = 13.sp
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        // Decrement
+        TextButton(
+            onClick = { viewModel.setCooldownCount(count - 1) },
+            enabled = count > 1,
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+            modifier = Modifier.defaultMinSize(minWidth = 32.dp, minHeight = 32.dp)
+        ) {
+            Text("−", fontSize = 18.sp, color = if (count > 1) SpotifyGreen else SpotifyLightGray.copy(alpha = 0.3f))
+        }
+        // Current value
+        Text(
+            text = count.toString(),
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.widthIn(min = 20.dp),
+            textAlign = TextAlign.Center
+        )
+        // Increment
+        TextButton(
+            onClick = { viewModel.setCooldownCount(count + 1) },
+            enabled = count < 10,
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+            modifier = Modifier.defaultMinSize(minWidth = 32.dp, minHeight = 32.dp)
+        ) {
+            Text("+", fontSize = 18.sp, color = if (count < 10) SpotifyGreen else SpotifyLightGray.copy(alpha = 0.3f))
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = "playlists",
+            color = SpotifyLightGray.copy(alpha = 0.7f),
+            fontSize = 13.sp
+        )
     }
 }
 
