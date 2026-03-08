@@ -140,13 +140,12 @@ class SpotifyRepository(
     }
 
     /**
-     * Replaces the tracks in an existing playlist.
-     * Returns false ONLY for 404 (playlist deleted) so the caller can create a new one.
-     * Throws HttpException for any other error (e.g., 403 Forbidden) so failures are visible.
+     * Replaces the tracks in a playlist via PUT /playlists/{id}/tracks.
+     * Returns false for 404 (deleted) or 403 (stale/forbidden) so the caller can react.
+     * Throws for any other HTTP error.
      */
     suspend fun replacePlaylistTracks(playlistId: String, trackUris: List<String>): Boolean {
         ensureValidToken()
-        // Spotify accepts max 100 URIs per PUT call; our 2-hour playlist is ~30 tracks
         Log.d(TAG, "replacePlaylistTracks: playlistId=$playlistId uris=${trackUris.size}")
         val response = api.replacePlaylistTracks(
             playlistId = playlistId,
@@ -155,15 +154,31 @@ class SpotifyRepository(
         if (!response.isSuccessful) {
             val body = try { response.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
             Log.w(TAG, "replacePlaylistTracks failed: ${response.code()} — $body")
-            if (response.code() == 404 || response.code() == 403) {
-                // 404 = playlist deleted; 403 = no longer accessible (e.g. after re-auth).
-                // Either way, tell the caller to create a fresh playlist.
-                return false
-            }
-            // Any other failure (400, 5xx, etc.) — throw so it surfaces to the user
+            if (response.code() == 404 || response.code() == 403) return false
             throw retrofit2.HttpException(response)
         }
         Log.d(TAG, "replacePlaylistTracks succeeded for $playlistId")
+        return true
+    }
+
+    /**
+     * Appends tracks to a playlist via POST /playlists/{id}/tracks.
+     * Used as a fallback when PUT (replacePlaylistTracks) is blocked (403).
+     * Returns true on success, throws on error.
+     */
+    suspend fun addTracksToPlaylist(playlistId: String, trackUris: List<String>): Boolean {
+        ensureValidToken()
+        Log.d(TAG, "addTracksToPlaylist: playlistId=$playlistId uris=${trackUris.size}")
+        val response = api.addTracksToPlaylist(
+            playlistId = playlistId,
+            body = TracksBody(trackUris.take(100))
+        )
+        if (!response.isSuccessful) {
+            val body = try { response.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
+            Log.w(TAG, "addTracksToPlaylist failed: ${response.code()} — $body")
+            throw retrofit2.HttpException(response)
+        }
+        Log.d(TAG, "addTracksToPlaylist succeeded for $playlistId")
         return true
     }
 

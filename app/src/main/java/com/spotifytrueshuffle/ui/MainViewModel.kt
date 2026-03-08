@@ -218,6 +218,7 @@ class MainViewModel(
         val description = "True shuffle of ${tracks.flatMap { it.artists }.map { it.id }.toSet().size}" +
             " artists — generated ${LocalDate.now()}"
 
+        // ── Try to update the existing playlist ──────────────────────────────
         val existingId = tokenStorage.playlistId
         if (existingId != null) {
             val updated = repository.replacePlaylistTracks(existingId, uris)
@@ -225,10 +226,11 @@ class MainViewModel(
                 Log.d(TAG, "Playlist $existingId updated")
                 return "https://open.spotify.com/playlist/$existingId"
             }
-            Log.w(TAG, "Stored playlist $existingId no longer accessible, creating new one")
+            Log.w(TAG, "Stored playlist $existingId returned 404/403 — creating a new one")
             tokenStorage.playlistId = null
         }
 
+        // ── Create a fresh playlist ───────────────────────────────────────────
         val playlist = try {
             repository.createPlaylist(userId, description)
         } catch (e: retrofit2.HttpException) {
@@ -243,8 +245,15 @@ class MainViewModel(
             )
         }
         tokenStorage.playlistId = playlist.id
-        repository.replacePlaylistTracks(playlist.id, uris)
         Log.d(TAG, "New playlist created: ${playlist.id}")
+
+        // ── Populate it — try PUT first, fall back to POST ────────────────────
+        val replaced = repository.replacePlaylistTracks(playlist.id, uris)
+        if (!replaced) {
+            Log.w(TAG, "PUT /playlists/${playlist.id}/tracks returned 403 — trying POST fallback")
+            repository.addTracksToPlaylist(playlist.id, uris)
+        }
+
         return playlist.externalUrls?.spotify ?: "https://open.spotify.com/playlist/${playlist.id}"
     }
 
