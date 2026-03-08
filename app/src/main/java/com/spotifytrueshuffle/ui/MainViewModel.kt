@@ -134,11 +134,17 @@ class MainViewModel(
                 val sample = (tierA + tierB).shuffled()
                 Log.d(TAG, "Sampling ${sample.size} artists (${tierA.size} tier-A, ${tierB.size} tier-B)")
 
-                val tracksByArtist = fetchTracksForArtists(sample, market, progressStep = 3, progressTotal = 4)
+                val (tracksByArtist, fetchDiag) = fetchTracksForArtists(sample, market, progressStep = 3, progressTotal = 4)
                 if (tracksByArtist.isEmpty()) {
+                    val hint = when {
+                        fetchDiag.http403 > 0 -> "Tap \"Log Out & Re-authorize\" to refresh permissions."
+                        fetchDiag.rateLimitSkips > 0 -> "Wait 60 seconds and tap Try Again."
+                        fetchDiag.empty > 0 -> "Search returned no tracks. Try tapping Build again."
+                        else -> "Wait 60 seconds and tap Try Again."
+                    }
                     _uiState.value = UiState.Error(
-                        "Couldn't load any tracks.\n\nSpotify may be rate-limiting this app. " +
-                        "Wait 60 seconds and tap Try Again."
+                        "No tracks loaded from ${sample.size} artists.\n" +
+                        "[${fetchDiag.summary()}]\n\n$hint"
                     )
                     return@launch
                 }
@@ -224,13 +230,20 @@ class MainViewModel(
      * - If > [RATE_LIMIT_MAX_WAIT_SEC]: skip immediately and move to the next artist
      *   (we have enough artists in the sample to absorb skips)
      */
+    private data class FetchDiagnostics(
+        val success: Int, val empty: Int, val http403: Int, val rateLimitSkips: Int, val other: Int
+    ) {
+        fun summary() = "ok=$success empty=$empty 403=$http403 429-skipped=$rateLimitSkips err=$other"
+    }
+
     private suspend fun fetchTracksForArtists(
         artists: List<Artist>,
         market: String,
         progressStep: Int,
         progressTotal: Int
-    ): Map<String, List<Track>> {
+    ): Pair<Map<String, List<Track>>, FetchDiagnostics> {
         val result = mutableMapOf<String, List<Track>>()
+        var success = 0; var empty = 0; var http403 = 0; var rateLimitSkips = 0; var other = 0
 
         for ((index, artist) in artists.withIndex()) {
             progress(
@@ -240,13 +253,15 @@ class MainViewModel(
             )
             try {
                 val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
-                if (tracks.isNotEmpty()) result[artist.id] = tracks
+                if (tracks.isNotEmpty()) { result[artist.id] = tracks; success++ } else empty++
             } catch (e: retrofit2.HttpException) {
                 when (e.code()) {
-                    404 -> Log.d(TAG, "Artist ${artist.name} not found, skipping")
+                    404 -> { empty++; Log.d(TAG, "Artist ${artist.name} not found, skipping") }
+                    403 -> { http403++; Log.w(TAG, "HTTP 403 for ${artist.name}, skipping") }
                     429 -> {
+                        // Default 30s when Spotify omits Retry-After.
                         val retryAfterSec = e.response()
-                            ?.headers()?.get("Retry-After")?.toLongOrNull() ?: 5L
+                            ?.headers()?.get("Retry-After")?.toLongOrNull() ?: 30L
                         if (retryAfterSec <= RATE_LIMIT_MAX_WAIT_SEC) {
                             Log.w(TAG, "Rate limited on ${artist.name} — waiting ${retryAfterSec}s, retrying")
                             progress(
@@ -256,27 +271,34 @@ class MainViewModel(
                             delay(retryAfterSec * 1_000L)
                             try {
                                 val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
-                                if (tracks.isNotEmpty()) result[artist.id] = tracks
+                                if (tracks.isNotEmpty()) { result[artist.id] = tracks; success++ } else empty++
+                            } catch (e2: retrofit2.HttpException) {
+                                rateLimitSkips++
+                                Log.w(TAG, "Retry failed for ${artist.name}: HTTP ${e2.code()}, skipping")
                             } catch (e2: Exception) {
-                                Log.w(TAG, "Retry failed for ${artist.name}, skipping")
+                                other++
+                                Log.w(TAG, "Retry failed for ${artist.name}: ${e2.message}, skipping")
                             }
                         } else {
-                            Log.w(TAG, "Rate limited on ${artist.name} (Retry-After=${retryAfterSec}s > ${RATE_LIMIT_MAX_WAIT_SEC}s threshold) — skipping")
+                            rateLimitSkips++
+                            Log.w(TAG, "Rate limited on ${artist.name} (Retry-After=${retryAfterSec}s > ${RATE_LIMIT_MAX_WAIT_SEC}s) — skipping")
                         }
                     }
-                    else -> Log.w(TAG, "HTTP ${e.code()} for ${artist.name}, skipping")
+                    else -> { other++; Log.w(TAG, "HTTP ${e.code()} for ${artist.name}, skipping") }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                other++
                 Log.w(TAG, "Exception for ${artist.name}: ${e.message}, skipping")
             }
 
             delay(TRACK_FETCH_DELAY_MS)
         }
 
-        Log.d(TAG, "Tracks fetched for ${result.size} / ${artists.size} artists")
-        return result
+        val diag = FetchDiagnostics(success, empty, http403, rateLimitSkips, other)
+        Log.d(TAG, "Track fetch complete: ${diag.summary()}")
+        return Pair(result, diag)
     }
 
     /**
