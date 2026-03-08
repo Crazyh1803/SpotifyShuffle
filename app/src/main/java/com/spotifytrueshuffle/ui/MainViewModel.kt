@@ -29,7 +29,7 @@ private const val TAG = "MainViewModel"
 private const val TIER_A_SAMPLE = 6   // top/frequent artists
 private const val TIER_B_SAMPLE = 9   // followed but not top
 private const val TRACK_FETCH_DELAY_MS = 1_000L
-private const val RATE_LIMIT_MAX_WAIT_SEC = 60L  // skip artist if Retry-After > this
+private const val RATE_LIMIT_MAX_WAIT_SEC = 300L  // hard cap on global window-reset wait
 
 class MainViewModel(
     private val authManager: SpotifyAuthManager,
@@ -260,17 +260,23 @@ class MainViewModel(
                     403 -> { http403++; Log.w(TAG, "HTTP 403 for ${artist.name}, skipping") }
                     429 -> {
                         if (!rateLimitWindowReset) {
-                            // Cap wait so it never blocks indefinitely.
+                            // Respect Spotify's Retry-After; cap only at hard max.
                             val waitSec = minOf(
                                 e.response()?.headers()?.get("Retry-After")?.toLongOrNull() ?: 30L,
                                 RATE_LIMIT_MAX_WAIT_SEC
                             )
                             Log.w(TAG, "Rate limit hit — waiting ${waitSec}s to reset window")
-                            progress(
-                                "Spotify rate limit — resuming in ${waitSec}s…",
-                                progressStep, progressTotal
-                            )
-                            delay(waitSec * 1_000L)
+                            // Countdown so the user sees progress rather than a frozen screen
+                            var remaining = waitSec
+                            while (remaining > 0) {
+                                progress(
+                                    "Spotify rate limit — resuming in ${remaining}s…",
+                                    progressStep, progressTotal
+                                )
+                                val tick = minOf(remaining, 5L)
+                                delay(tick * 1_000L)
+                                remaining -= tick
+                            }
                             rateLimitWindowReset = true
                             try {
                                 val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
