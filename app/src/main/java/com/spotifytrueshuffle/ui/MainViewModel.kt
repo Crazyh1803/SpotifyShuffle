@@ -221,21 +221,20 @@ class MainViewModel(
         return library
     }
 
-    /**
-     * Fetches top tracks for [artists] one at a time with [TRACK_FETCH_DELAY_MS] between calls.
-     *
-     * Rate-limit (429) strategy:
-     * - Read Retry-After header
-     * - If ≤ [RATE_LIMIT_MAX_WAIT_SEC]: wait and retry once
-     * - If > [RATE_LIMIT_MAX_WAIT_SEC]: skip immediately and move to the next artist
-     *   (we have enough artists in the sample to absorb skips)
-     */
     private data class FetchDiagnostics(
         val success: Int, val empty: Int, val http403: Int, val rateLimitSkips: Int, val other: Int
     ) {
         fun summary() = "ok=$success empty=$empty 403=$http403 429-skipped=$rateLimitSkips err=$other"
     }
 
+    /**
+     * Fetches top tracks for [artists] one at a time with [TRACK_FETCH_DELAY_MS] between calls.
+     *
+     * Rate-limit strategy: the FIRST 429 triggers a single global window-reset wait
+     * (capped at [RATE_LIMIT_MAX_WAIT_SEC]). After that wait the Spotify rate-limit
+     * window resets and the remaining artists should succeed without further delays.
+     * A second 429 after the global wait skips that artist rather than waiting again.
+     */
     private suspend fun fetchTracksForArtists(
         artists: List<Artist>,
         market: String,
@@ -244,6 +243,7 @@ class MainViewModel(
     ): Pair<Map<String, List<Track>>, FetchDiagnostics> {
         val result = mutableMapOf<String, List<Track>>()
         var success = 0; var empty = 0; var http403 = 0; var rateLimitSkips = 0; var other = 0
+        var rateLimitWindowReset = false   // true once we've done the one global wait
 
         for ((index, artist) in artists.withIndex()) {
             progress(
@@ -259,29 +259,32 @@ class MainViewModel(
                     404 -> { empty++; Log.d(TAG, "Artist ${artist.name} not found, skipping") }
                     403 -> { http403++; Log.w(TAG, "HTTP 403 for ${artist.name}, skipping") }
                     429 -> {
-                        // Default 30s when Spotify omits Retry-After.
-                        val retryAfterSec = e.response()
-                            ?.headers()?.get("Retry-After")?.toLongOrNull() ?: 30L
-                        if (retryAfterSec <= RATE_LIMIT_MAX_WAIT_SEC) {
-                            Log.w(TAG, "Rate limited on ${artist.name} — waiting ${retryAfterSec}s, retrying")
+                        if (!rateLimitWindowReset) {
+                            // Cap wait so it never blocks indefinitely.
+                            val waitSec = minOf(
+                                e.response()?.headers()?.get("Retry-After")?.toLongOrNull() ?: 30L,
+                                RATE_LIMIT_MAX_WAIT_SEC
+                            )
+                            Log.w(TAG, "Rate limit hit — waiting ${waitSec}s to reset window")
                             progress(
-                                "Spotify rate limit — resuming in ${retryAfterSec}s…",
+                                "Spotify rate limit — resuming in ${waitSec}s…",
                                 progressStep, progressTotal
                             )
-                            delay(retryAfterSec * 1_000L)
+                            delay(waitSec * 1_000L)
+                            rateLimitWindowReset = true
                             try {
                                 val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
                                 if (tracks.isNotEmpty()) { result[artist.id] = tracks; success++ } else empty++
                             } catch (e2: retrofit2.HttpException) {
                                 rateLimitSkips++
-                                Log.w(TAG, "Retry failed for ${artist.name}: HTTP ${e2.code()}, skipping")
+                                Log.w(TAG, "Retry after window reset failed for ${artist.name}: HTTP ${e2.code()}")
                             } catch (e2: Exception) {
                                 other++
-                                Log.w(TAG, "Retry failed for ${artist.name}: ${e2.message}, skipping")
+                                Log.w(TAG, "Retry after window reset failed for ${artist.name}: ${e2.message}")
                             }
                         } else {
                             rateLimitSkips++
-                            Log.w(TAG, "Rate limited on ${artist.name} (Retry-After=${retryAfterSec}s > ${RATE_LIMIT_MAX_WAIT_SEC}s) — skipping")
+                            Log.w(TAG, "Still rate limited on ${artist.name} after global wait — skipping")
                         }
                     }
                     else -> { other++; Log.w(TAG, "HTTP ${e.code()} for ${artist.name}, skipping") }
