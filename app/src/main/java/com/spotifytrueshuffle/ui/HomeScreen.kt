@@ -6,6 +6,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,10 +58,10 @@ fun HomeScreen(
                 ) { state ->
                     when (state) {
                         is MainViewModel.UiState.NotLoggedIn -> NotLoggedInContent(onLoginClick)
-                        is MainViewModel.UiState.LoggedIn -> LoggedInContent(viewModel)
-                        is MainViewModel.UiState.Building -> BuildingContent(state)
-                        is MainViewModel.UiState.Success -> SuccessContent(state, viewModel)
-                        is MainViewModel.UiState.Error -> ErrorContent(state, viewModel)
+                        is MainViewModel.UiState.LoggedIn    -> LoggedInContent(state, viewModel)
+                        is MainViewModel.UiState.Building    -> BuildingContent(state)
+                        is MainViewModel.UiState.Success     -> SuccessContent(state, viewModel)
+                        is MainViewModel.UiState.Error       -> ErrorContent(state, viewModel)
                     }
                 }
             }
@@ -108,25 +109,73 @@ private fun NotLoggedInContent(onLoginClick: () -> Unit) {
 }
 
 @Composable
-private fun LoggedInContent(viewModel: MainViewModel) {
+private fun LoggedInContent(
+    state: MainViewModel.UiState.LoggedIn,
+    viewModel: MainViewModel
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = "Ready to build your playlist",
-            color = SpotifyLightGray,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "Mixes frequently and rarely heard artists\nfrom everyone you follow — ~2 hours long.",
-            color = SpotifyLightGray.copy(alpha = 0.6f),
-            textAlign = TextAlign.Center,
-            fontSize = 13.sp
-        )
-        Spacer(modifier = Modifier.height(32.dp))
-        SpotifyButton(
-            text = "Build True Shuffle Playlist",
-            onClick = { viewModel.buildPlaylist() }
-        )
+        if (state.cachedArtistCount > 0) {
+            // ── Cache status badge ──────────────────────────────────────────
+            Text(
+                text = "Library: ${state.cachedArtistCount} artists cached",
+                color = SpotifyGreen,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            state.lastRefreshed?.let {
+                Text(
+                    text = "Last updated $it",
+                    color = SpotifyLightGray.copy(alpha = 0.5f),
+                    fontSize = 12.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Builds are instant — no API calls needed.",
+                color = SpotifyLightGray.copy(alpha = 0.55f),
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(28.dp))
+
+            SpotifyButton(
+                text = "Build True Shuffle Playlist",
+                onClick = { viewModel.buildPlaylist() }
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = { viewModel.refreshArtists() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyGreen),
+                border = BorderStroke(1.dp, SpotifyGreen)
+            ) {
+                Text("Check for New Artists", fontWeight = FontWeight.Medium)
+            }
+        } else {
+            // ── First-time empty state ──────────────────────────────────────
+            Text(
+                text = "First time setup",
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "The app will build a local library of your artists' tracks (~20 seconds). Future playlist builds are instant.",
+                color = SpotifyLightGray,
+                textAlign = TextAlign.Center,
+                fontSize = 14.sp
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+            SpotifyButton(
+                text = "Build Artist Library & Playlist",
+                onClick = { viewModel.buildPlaylist() }
+            )
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
         TextButton(onClick = { viewModel.logout() }) {
             Text("Log out", color = SpotifyLightGray.copy(alpha = 0.5f))
@@ -210,9 +259,9 @@ private fun SuccessContent(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(50),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyGreen),
-            border = androidx.compose.foundation.BorderStroke(1.dp, SpotifyGreen)
+            border = BorderStroke(1.dp, SpotifyGreen)
         ) {
-            Text("Refresh Playlist")
+            Text("Build New Playlist")
         }
         Spacer(modifier = Modifier.height(16.dp))
         TextButton(onClick = { viewModel.logout() }) {

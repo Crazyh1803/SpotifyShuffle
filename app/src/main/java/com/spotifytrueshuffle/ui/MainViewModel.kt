@@ -10,13 +10,18 @@ import com.spotifytrueshuffle.api.SpotifyRepository
 import com.spotifytrueshuffle.api.Track
 import com.spotifytrueshuffle.auth.SpotifyAuthManager
 import com.spotifytrueshuffle.auth.TokenStorage
+import com.spotifytrueshuffle.cache.ArtistTrackCache
+import com.spotifytrueshuffle.cache.TrackCacheData
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 private const val TAG = "MainViewModel"
 
@@ -24,12 +29,17 @@ class MainViewModel(
     private val authManager: SpotifyAuthManager,
     private val repository: SpotifyRepository,
     private val tokenStorage: TokenStorage,
-    private val shuffleEngine: TrueShuffleEngine
+    private val shuffleEngine: TrueShuffleEngine,
+    private val trackCache: ArtistTrackCache
 ) : ViewModel() {
 
     sealed class UiState {
         object NotLoggedIn : UiState()
-        object LoggedIn : UiState()
+        /** Logged in and ready. Shows cache stats if artists have been cached. */
+        data class LoggedIn(
+            val cachedArtistCount: Int = 0,
+            val lastRefreshed: String? = null
+        ) : UiState()
         data class Building(val progress: String, val step: Int, val totalSteps: Int = 5) : UiState()
         data class Success(
             val playlistUrl: String,
@@ -40,21 +50,21 @@ class MainViewModel(
         data class Error(val message: String) : UiState()
     }
 
-    private val _uiState = MutableStateFlow<UiState>(
-        if (authManager.isLoggedIn()) UiState.LoggedIn else UiState.NotLoggedIn
-    )
+    private val _uiState = MutableStateFlow<UiState>(UiState.NotLoggedIn)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+
+    init {
+        // Restore login state on startup, showing cache info if available
+        _uiState.value = if (authManager.isLoggedIn()) loggedInState() else UiState.NotLoggedIn
+    }
 
     // ── Auth ─────────────────────────────────────────────────────────────────
 
     fun handleAuthCallback(code: String) {
         viewModelScope.launch {
             val success = authManager.handleCallback(code)
-            _uiState.value = if (success) {
-                UiState.LoggedIn
-            } else {
-                UiState.Error("Login failed — please try again")
-            }
+            _uiState.value = if (success) loggedInState()
+                             else UiState.Error("Login failed — please try again")
         }
     }
 
@@ -64,11 +74,18 @@ class MainViewModel(
     }
 
     fun dismissError() {
-        _uiState.value = if (authManager.isLoggedIn()) UiState.LoggedIn else UiState.NotLoggedIn
+        _uiState.value = if (authManager.isLoggedIn()) loggedInState() else UiState.NotLoggedIn
     }
 
     // ── Playlist Build ───────────────────────────────────────────────────────
 
+    /**
+     * Builds and saves a True Shuffle playlist.
+     *
+     * Uses the local artist track cache when available — no API calls needed
+     * for track data on repeat runs. Only fetches tracks on first use or after
+     * the user taps "Check for New Artists".
+     */
     fun buildPlaylist() {
         viewModelScope.launch {
             var stepName = "initializing"
@@ -77,6 +94,7 @@ class MainViewModel(
                 stepName = "getUserProfile"
                 progress("Getting your Spotify profile…", 1)
                 val user = repository.getUserProfile()
+                val market = user.country ?: "US"
 
                 // Step 2: Followed artists
                 stepName = "getAllFollowedArtists"
@@ -98,14 +116,30 @@ class MainViewModel(
                 val topArtists = repository.getTopArtists()
                 val topArtistIds = topArtists.map { it.id }.toSet()
 
-                // Step 4: Fetch tracks (biggest step — rate-limit aware)
-                // Always pass a non-null market so Spotify can resolve the correct regional
-                // catalog. Fall back to "US" if the profile didn't return a country (which
-                // can happen when the token is missing user-read-private scope).
-                val market = user.country ?: "US"
-                Log.d(TAG, "User country: ${user.country}, using market: $market")
+                // Step 4: Track data — from cache or fresh fetch
                 stepName = "fetchTracksForSample"
-                val tracksByArtist = fetchTracksForSample(followedArtists, topArtistIds, market)
+                val cacheData = trackCache.load()
+                val cachedForFollowed = cacheData.artistTracks
+                    .filterKeys { id -> followedArtists.any { it.id == id } }
+
+                val tracksByArtist: Map<String, List<Track>>
+                if (cachedForFollowed.isNotEmpty()) {
+                    // Fast path — use the cache, no Spotify search calls needed
+                    progress("Using cached library (${cachedForFollowed.size} artists)…", 4)
+                    Log.d(TAG, "Using cache: ${cachedForFollowed.size} artists")
+                    tracksByArtist = cachedForFollowed
+                } else {
+                    // First run or empty cache — fetch then persist
+                    progress("Building your artist library (first time only)…", 4)
+                    val fresh = fetchTracksForSample(followedArtists, topArtistIds, market)
+                    trackCache.save(
+                        TrackCacheData(
+                            lastRefreshedMs = System.currentTimeMillis(),
+                            artistTracks = fresh
+                        )
+                    )
+                    tracksByArtist = fresh
+                }
 
                 // Step 5: Build playlist & save to Spotify
                 stepName = "savePlaylist"
@@ -142,8 +176,7 @@ class MainViewModel(
                     Log.e(TAG, "HTTP ${e.code()} body at $stepName: $body")
                     when {
                         stepName == "savePlaylist" && e.code() == 403 ->
-                            "Spotify ${e.code()} at step: $stepName\n\n" +
-                            "Diag: $body"
+                            "Spotify ${e.code()} at step: $stepName\n\nDiag: $body"
                         else ->
                             "HTTP ${e.code()} at step: $stepName\n\n" +
                             "Tap Log Out & Re-authorize, make sure to tap Agree on the Spotify screen."
@@ -156,10 +189,85 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Checks Spotify for newly followed artists and fetches their tracks into the cache.
+     * Artists already in the cache are skipped — only new ones are fetched.
+     * Called when the user taps "Check for New Artists".
+     */
+    fun refreshArtists() {
+        viewModelScope.launch {
+            var stepName = "initializing"
+            try {
+                stepName = "getUserProfile"
+                progress("Checking for new artists…", 1, totalSteps = 3)
+                val user = repository.getUserProfile()
+                val market = user.country ?: "US"
+
+                stepName = "getAllFollowedArtists"
+                val followedArtists = repository.getAllFollowedArtists()
+
+                val cacheData = trackCache.load()
+                val newArtists = followedArtists.filter { it.id !in cacheData.artistTracks.keys }
+
+                if (newArtists.isEmpty()) {
+                    Log.d(TAG, "No new artists — cache already up to date")
+                    _uiState.value = loggedInState()
+                    return@launch
+                }
+
+                stepName = "getTopArtists"
+                val topArtistIds = repository.getTopArtists().map { it.id }.toSet()
+
+                stepName = "fetchNewArtistTracks"
+                progress("Fetching tracks for ${newArtists.size} new artists…", 2, totalSteps = 3)
+                val newTracks = fetchTracksForSample(newArtists, topArtistIds, market)
+
+                val updated = TrackCacheData(
+                    lastRefreshedMs = System.currentTimeMillis(),
+                    artistTracks = cacheData.artistTracks + newTracks
+                )
+                trackCache.save(updated)
+                Log.d(TAG, "Cache updated: added ${newTracks.size} artists (total ${updated.artistTracks.size})")
+
+                _uiState.value = UiState.LoggedIn(
+                    cachedArtistCount = updated.artistTracks.size,
+                    lastRefreshed = "Just now (+${newTracks.size} new)"
+                )
+
+            } catch (e: Exception) {
+                Log.e(TAG, "refreshArtists failed at $stepName", e)
+                _uiState.value = UiState.Error(
+                    e.message ?: "Failed to check for new artists. Please try again."
+                )
+            }
+        }
+    }
+
     // ── Private helpers ──────────────────────────────────────────────────────
 
     /**
-     * Fetches top tracks for a representative sample of the user's followed artists.
+     * Returns a LoggedIn state populated with current cache statistics.
+     */
+    private fun loggedInState(): UiState.LoggedIn {
+        val cache = trackCache.load()
+        return UiState.LoggedIn(
+            cachedArtistCount = cache.artistTracks.size,
+            lastRefreshed = formatDate(cache.lastRefreshedMs)
+        )
+    }
+
+    /**
+     * Formats an epoch-ms timestamp as a short date string (e.g., "Mar 7").
+     * Returns null if the timestamp is 0 (never set).
+     */
+    private fun formatDate(ms: Long): String? {
+        if (ms == 0L) return null
+        val date = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate()
+        return date.format(DateTimeFormatter.ofPattern("MMM d"))
+    }
+
+    /**
+     * Fetches top tracks for a representative sample of the given artist list.
      *
      * Rate-limit strategy:
      * - Up to 20 Tier-A + 30 Tier-B artists sampled (50 requests max)
@@ -230,13 +338,12 @@ class MainViewModel(
             // Surface the actual root-cause error instead of a generic message
             val cause = when (val e = firstError) {
                 is retrofit2.HttpException -> {
-                    // Read the Spotify error body so we can see the exact reason
                     val body = try {
                         e.response()?.errorBody()?.string() ?: "(no body)"
                     } catch (_: Exception) { "(unreadable)" }
-                    Log.e(TAG, "Spotify 403 body: $body")
+                    Log.e(TAG, "Spotify error body: $body")
                     when (e.code()) {
-                        403 -> "Spotify API 403 Forbidden on both top-tracks and recommendations.\n\nDiag: market=$market\n\nPlease tap Log Out, go to spotify.com/account/apps, remove this app, then reconnect and tap Agree."
+                        403 -> "Spotify API 403 Forbidden.\n\nDiag: market=$market\n\nPlease tap Log Out, go to spotify.com/account/apps, remove this app, then reconnect and tap Agree."
                         401 -> "Spotify session expired. Please log out and log back in."
                         429 -> "Spotify rate limit hit. Wait a minute and try again."
                         else -> "Spotify API error ${e.code()}: $body"
@@ -319,9 +426,10 @@ class MainViewModelFactory(
     private val authManager: SpotifyAuthManager,
     private val repository: SpotifyRepository,
     private val tokenStorage: TokenStorage,
-    private val shuffleEngine: TrueShuffleEngine
+    private val shuffleEngine: TrueShuffleEngine,
+    private val trackCache: ArtistTrackCache
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        MainViewModel(authManager, repository, tokenStorage, shuffleEngine) as T
+        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache) as T
 }
