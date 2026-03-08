@@ -114,10 +114,12 @@ class MainViewModel(
                     return@launch
                 }
 
-                // Step 3 — build track pool from /me/ endpoints (no per-artist calls)
+                // Step 3 — build track pool (library sources + gap-artist top-tracks)
                 stepName = "buildTrackPool"
                 progress("Scanning your Spotify library for tracks…", 3, 4)
-                val tracksByArtist = repository.buildTrackPool()
+                val tracksByArtist = repository.buildTrackPool(
+                    followedArtistIds = library.followedArtists.map { it.id }
+                )
                 Log.d(TAG, "Track pool covers ${tracksByArtist.size} artists")
 
                 if (tracksByArtist.isEmpty()) {
