@@ -78,6 +78,17 @@ interface SpotifyApiService {
         @Query("offset") offset: Int = 0
     ): PagingObject<SavedTrack>
 
+    /**
+     * Paginated list of albums saved to the user's library ("liked albums").
+     * Requires user-library-read scope.
+     * Each returned album includes its full track listing (up to 50 tracks per album).
+     */
+    @GET("me/albums")
+    suspend fun getSavedAlbums(
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0
+    ): PagingObject<SavedAlbum>
+
     // ── Playlists ─────────────────────────────────────────────────────────────
 
     @GET("me/playlists")

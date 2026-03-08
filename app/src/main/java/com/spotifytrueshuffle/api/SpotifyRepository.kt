@@ -122,6 +122,36 @@ class SpotifyRepository(
             }
         }
 
+        // 3. Saved ("liked") albums — fetch first 50 albums, each includes its track listing.
+        //    Albums often cover followed artists who have no individually liked songs, which is
+        //    exactly the gap we need to fill so the shuffle can reach more of the artist library.
+        //    SimplifiedTrack has no popularity field, so we default to 0 (treated as a deep cut
+        //    by the shuffle engine — a reasonable default for less-explored music).
+        try {
+            val albumPage = api.getSavedAlbums(limit = 50, offset = 0)
+            var albumTrackCount = 0
+            for (savedAlbum in albumPage.items) {
+                val alb = savedAlbum.album
+                val albumSimple = AlbumSimple(
+                    id = alb.id, name = alb.name,
+                    releaseDate = alb.releaseDate, images = alb.images
+                )
+                alb.tracks.items
+                    .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                    .forEach { st ->
+                        addTrack(Track(
+                            id = st.id, name = st.name, durationMs = st.durationMs,
+                            popularity = 0, uri = st.uri, artists = st.artists,
+                            album = albumSimple, previewUrl = st.previewUrl
+                        ))
+                        albumTrackCount++
+                    }
+            }
+            Log.d(TAG, "Saved albums: $albumTrackCount tracks from ${albumPage.items.size} albums")
+        } catch (e: retrofit2.HttpException) {
+            Log.w(TAG, "getSavedAlbums failed: ${e.code()}")
+        }
+
         val result = trackMap.mapValues { (_, tracks) -> tracks.distinctBy { it.id } }
         Log.d(TAG, "Track pool: ${result.values.sumOf { it.size }} tracks for ${result.size} artists")
         return result

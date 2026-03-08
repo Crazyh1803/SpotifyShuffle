@@ -104,6 +104,37 @@ data class SavedTrack(
     val track: Track
 )
 
+/**
+ * A track in simplified form — used inside album track listings (GET /me/albums).
+ * Unlike the full Track, SimplifiedTrack has no popularity field; we default to 0
+ * when converting, which causes the shuffle engine to treat these as "deep cuts"
+ * (biased toward less-popular selections for rare artists — a good default).
+ */
+data class SimplifiedTrack(
+    val id: String,
+    val name: String,
+    @SerializedName("duration_ms") val durationMs: Int,
+    val uri: String,
+    val artists: List<ArtistSimple>,
+    @SerializedName("preview_url") val previewUrl: String?,
+    @SerializedName("is_local") val isLocal: Boolean = false
+)
+
+/** Album object with its track listing — nested inside SavedAlbum. */
+data class AlbumWithTracks(
+    val id: String,
+    val name: String,
+    @SerializedName("release_date") val releaseDate: String?,
+    val images: List<SpotifyImage>?,
+    val tracks: PagingObject<SimplifiedTrack>
+)
+
+/** A saved (liked) album from GET /me/albums. Requires user-library-read scope. */
+data class SavedAlbum(
+    @SerializedName("added_at") val addedAt: String?,
+    val album: AlbumWithTracks
+)
+
 data class SnapshotResponse(
     @SerializedName("snapshot_id") val snapshotId: String
 )
