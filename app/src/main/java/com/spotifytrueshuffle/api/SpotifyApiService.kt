@@ -104,19 +104,25 @@ interface SpotifyApiService {
     ): Playlist
 
     /**
-     * Replaces ALL tracks in the playlist (up to 100 URIs per call).
+     * Replaces ALL items in the playlist (up to 100 URIs per call).
      * Returns the new snapshot_id, or 404 if the playlist no longer exists.
+     *
+     * Note: Spotify renamed /tracks → /items in their February 2026 API migration.
+     * Development-mode apps calling the old /tracks path receive 403 "Forbidden".
      */
-    @PUT("playlists/{playlistId}/tracks")
+    @PUT("playlists/{playlistId}/items")
     suspend fun replacePlaylistTracks(
         @Path("playlistId") playlistId: String,
         @Body body: TracksBody
     ): Response<SnapshotResponse>
 
     /**
-     * Appends tracks (used if we need to add >100 tracks in subsequent batches).
+     * Appends items to a playlist.
+     *
+     * Note: Spotify renamed /tracks → /items in their February 2026 API migration.
+     * Development-mode apps calling the old /tracks path receive 403 "Forbidden".
      */
-    @POST("playlists/{playlistId}/tracks")
+    @POST("playlists/{playlistId}/items")
     suspend fun addTracksToPlaylist(
         @Path("playlistId") playlistId: String,
         @Body body: TracksBody

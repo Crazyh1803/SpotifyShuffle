@@ -259,14 +259,8 @@ class MainViewModel(
             val hasModPub  = scopes.contains("playlist-modify-public")
             val hasModPriv = scopes.contains("playlist-modify-private")
             Log.e(TAG, "addTracks ${e.httpCode}: playlistId=${playlist.id} scopes=$scopes body=${e.responseBody} headers=${e.responseHeaders}")
-            // 403 "Forbidden" (not "Insufficient client scope") with valid scopes means Spotify's
-            // platform is blocking this endpoint for apps in Development Mode.
-            // PUT/POST /playlists/{id}/tracks requires Extended Quota Mode approval.
             throw Exception(
-                "Spotify ${e.httpCode} — playlist created but tracks couldn't be added.\n\n" +
-                "This is a Spotify platform restriction, not an auth issue.\n" +
-                "Your app needs Extended Quota Mode approval at:\n" +
-                "developer.spotify.com/dashboard\n\n" +
+                "Spotify ${e.httpCode} — tracks couldn't be added to playlist.\n\n" +
                 "modify-public=$hasModPub  modify-private=$hasModPriv\n" +
                 "Body: ${e.responseBody}"
             )
