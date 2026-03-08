@@ -44,6 +44,17 @@ class TokenStorage(context: Context) {
         get() = prefs.getString(KEY_PLAYLIST_ID, null)
         set(value) = prefs.edit().putString(KEY_PLAYLIST_ID, value).apply()
 
+    /**
+     * PKCE code verifier — persisted across process death so the OAuth callback
+     * still succeeds on real devices where Android kills the process while
+     * Chrome Custom Tab is in the foreground.
+     * Cleared immediately after a successful token exchange.
+     */
+    var pendingCodeVerifier: String?
+        get() = prefs.getString(KEY_CODE_VERIFIER, null)
+        set(value) = if (value != null) prefs.edit().putString(KEY_CODE_VERIFIER, value).apply()
+                     else prefs.edit().remove(KEY_CODE_VERIFIER).apply()
+
     /** The scope string Spotify actually returned in the last token exchange (for diagnostics). */
     var grantedScopes: String?
         get() = prefs.getString(KEY_GRANTED_SCOPES, null)
@@ -75,5 +86,6 @@ class TokenStorage(context: Context) {
         const val KEY_TOKEN_EXPIRY = "token_expiry"
         const val KEY_PLAYLIST_ID = "playlist_id"
         const val KEY_GRANTED_SCOPES = "granted_scopes"
+        const val KEY_CODE_VERIFIER = "pkce_code_verifier"
     }
 }
