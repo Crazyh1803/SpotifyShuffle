@@ -155,10 +155,12 @@ class SpotifyRepository(
         if (!response.isSuccessful) {
             val body = try { response.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
             Log.w(TAG, "replacePlaylistTracks failed: ${response.code()} — $body")
-            if (response.code() == 404) {
-                return false  // Playlist was deleted; caller will create a new one
+            if (response.code() == 404 || response.code() == 403) {
+                // 404 = playlist deleted; 403 = no longer accessible (e.g. after re-auth).
+                // Either way, tell the caller to create a fresh playlist.
+                return false
             }
-            // Any other failure (403, 400, etc.) — throw so it surfaces to the user
+            // Any other failure (400, 5xx, etc.) — throw so it surfaces to the user
             throw retrofit2.HttpException(response)
         }
         Log.d(TAG, "replacePlaylistTracks succeeded for $playlistId")
