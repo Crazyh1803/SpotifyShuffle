@@ -66,14 +66,50 @@ class SpotifyRepository(
     }
 
     /**
-     * Returns up to 10 top tracks for the artist via GET /artists/{id}/top-tracks.
-     * All errors (403, 429, etc.) propagate to the caller so they can be counted
-     * and handled with appropriate retry/skip logic.
+     * Builds a map of artistId → their tracks using only /me/ endpoints.
+     *
+     * Sources (all require no per-artist calls, no rate-limit issues):
+     *   • GET /me/top/tracks   × 3 time ranges (up to 150 tracks) — user-top-read
+     *   • GET /me/tracks       paginated up to 500 saved songs     — user-library-read
+     *
+     * Tracks are de-duplicated per artist. The primary artist of each track
+     * (artists[0]) is used as the grouping key.
      */
-    suspend fun getArtistTopTracks(artistId: String, artistName: String, market: String): List<Track> {
+    suspend fun buildTrackPool(): Map<String, List<Track>> {
         ensureValidToken()
-        Log.d(TAG, "top-tracks → $artistName ($artistId)")
-        return api.getArtistTopTracks(artistId, market).tracks
+        val trackMap = mutableMapOf<String, MutableList<Track>>()
+
+        fun addTrack(track: Track) {
+            val artistId = track.artists.firstOrNull()?.id ?: return
+            trackMap.getOrPut(artistId) { mutableListOf() }.add(track)
+        }
+
+        // 1. Top tracks — long / medium / short term
+        for (range in listOf("long_term", "medium_term", "short_term")) {
+            try {
+                api.getTopTracks(timeRange = range, limit = 50).items.forEach { addTrack(it) }
+            } catch (e: retrofit2.HttpException) {
+                Log.w(TAG, "getTopTracks($range) failed: ${e.code()}")
+            }
+        }
+
+        // 2. Saved ("liked") tracks — paginated, cap at 500
+        var offset = 0
+        while (offset < 500) {
+            try {
+                val page = api.getSavedTracks(limit = 50, offset = offset)
+                page.items.forEach { addTrack(it.track) }
+                offset += page.items.size
+                if (page.next == null || page.items.isEmpty()) break
+            } catch (e: retrofit2.HttpException) {
+                Log.w(TAG, "getSavedTracks(offset=$offset) failed: ${e.code()}")
+                break
+            }
+        }
+
+        val result = trackMap.mapValues { (_, tracks) -> tracks.distinctBy { it.id } }
+        Log.d(TAG, "Track pool: ${result.values.sumOf { it.size }} tracks for ${result.size} artists")
+        return result
     }
 
     // ── Playlist ──────────────────────────────────────────────────────────────

@@ -21,7 +21,7 @@ object SpotifyConfig {
      * - user-top-read:            read user's top artists (to identify frequently heard)
      * - playlist-modify-public/private: create and update the playlist
      */
-    const val SCOPES = "user-read-private user-follow-read user-top-read playlist-modify-public playlist-modify-private"
+    const val SCOPES = "user-read-private user-follow-read user-top-read user-library-read playlist-modify-public playlist-modify-private"
 
     const val PLAYLIST_NAME = "True Shuffle — All Artists"
 

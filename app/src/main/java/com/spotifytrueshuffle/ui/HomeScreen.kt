@@ -131,7 +131,7 @@ private fun LoggedInContent(
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "Picks 15 random artists each build (~15s).",
+                text = "Shuffles from your saved songs & top tracks.",
                 color = SpotifyLightGray.copy(alpha = 0.55f),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
@@ -164,7 +164,7 @@ private fun LoggedInContent(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Loads your full artist list once (fast), then picks 15 random artists to build each playlist (~15s per build).",
+                text = "Loads your full artist list once, then builds each playlist from your saved songs and top tracks.",
                 color = SpotifyLightGray,
                 textAlign = TextAlign.Center,
                 fontSize = 14.sp

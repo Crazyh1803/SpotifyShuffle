@@ -25,6 +25,17 @@ interface SpotifyApiService {
 
     /**
      * [timeRange]: "long_term" (years), "medium_term" (6 months), "short_term" (4 weeks)
+     * Requires user-top-read scope.
+     */
+    @GET("me/top/tracks")
+    suspend fun getTopTracks(
+        @Query("time_range") timeRange: String = "long_term",
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0
+    ): PagingObject<Track>
+
+    /**
+     * [timeRange]: "long_term" (years), "medium_term" (6 months), "short_term" (4 weeks)
      */
     @GET("me/top/artists")
     suspend fun getTopArtists(
@@ -56,6 +67,16 @@ interface SpotifyApiService {
         @Query("market") market: String,
         @Query("limit") limit: Int = 10
     ): SearchTracksResponse
+
+    /**
+     * Paginated list of tracks saved to the user's library ("liked songs").
+     * Requires user-library-read scope.
+     */
+    @GET("me/tracks")
+    suspend fun getSavedTracks(
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0
+    ): PagingObject<SavedTrack>
 
     // ── Playlists ─────────────────────────────────────────────────────────────
 

@@ -98,6 +98,12 @@ data class SearchTracksResponse(
     val tracks: PagingObject<Track>
 )
 
+/** A track saved to the user's library via GET /me/tracks. */
+data class SavedTrack(
+    @SerializedName("added_at") val addedAt: String?,
+    val track: Track
+)
+
 data class SnapshotResponse(
     @SerializedName("snapshot_id") val snapshotId: String
 )

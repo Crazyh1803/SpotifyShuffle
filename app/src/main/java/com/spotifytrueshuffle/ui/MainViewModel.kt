@@ -13,7 +13,6 @@ import com.spotifytrueshuffle.auth.TokenStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,12 +23,6 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private const val TAG = "MainViewModel"
-
-/** How many artists to sample tracks for on each playlist build. */
-private const val TIER_A_SAMPLE = 6   // top/frequent artists
-private const val TIER_B_SAMPLE = 9   // followed but not top
-private const val TRACK_FETCH_DELAY_MS = 1_000L
-private const val RATE_LIMIT_MAX_WAIT_SEC = 300L  // hard cap on global window-reset wait
 
 class MainViewModel(
     private val authManager: SpotifyAuthManager,
@@ -87,14 +80,12 @@ class MainViewModel(
     /**
      * Full playlist build flow:
      *
-     * 1. Get user profile (market for catalog lookups).
-     * 2. If artist library is not cached yet, fetch it first (fast — just artist names/IDs).
-     * 3. Pick a random sample of ~15 artists from the library.
-     * 4. Fetch tracks for only those ~15 artists (~15s with 1s delays).
-     * 5. Build and save the playlist.
-     *
-     * Because we pick a fresh random sample on every build, each playlist is different
-     * even though the artist library stays cached between runs.
+     * 1. Get user profile (needed for playlist creation).
+     * 2. Load artist library from cache (or fetch if not cached yet).
+     * 3. Build a track pool from /me/top/tracks + /me/tracks (saved songs).
+     *    All /me/ endpoints — no per-artist calls, no rate-limit risk.
+     * 4. Run the shuffle engine over all artists that have tracks in the pool,
+     *    then save the resulting playlist to Spotify.
      */
     fun buildPlaylist() {
         viewModelScope.launch {
@@ -104,7 +95,6 @@ class MainViewModel(
                 stepName = "getUserProfile"
                 progress("Getting your Spotify profile…", 1, 4)
                 val user = repository.getUserProfile()
-                val market = user.country ?: "US"
 
                 // Step 2 — artist library (load from cache or fetch fresh)
                 stepName = "artistLibrary"
@@ -124,27 +114,16 @@ class MainViewModel(
                     return@launch
                 }
 
-                // Step 3 — fetch tracks for a random sample of artists
-                stepName = "fetchTracks"
-                val topArtistIds = library.topArtistIds.toSet()
-                val tierA = library.followedArtists.filter { it.id in topArtistIds }
-                    .shuffled().take(TIER_A_SAMPLE)
-                val tierB = library.followedArtists.filter { it.id !in topArtistIds }
-                    .shuffled().take(TIER_B_SAMPLE)
-                val sample = (tierA + tierB).shuffled()
-                Log.d(TAG, "Sampling ${sample.size} artists (${tierA.size} tier-A, ${tierB.size} tier-B)")
+                // Step 3 — build track pool from /me/ endpoints (no per-artist calls)
+                stepName = "buildTrackPool"
+                progress("Scanning your Spotify library for tracks…", 3, 4)
+                val tracksByArtist = repository.buildTrackPool()
+                Log.d(TAG, "Track pool covers ${tracksByArtist.size} artists")
 
-                val (tracksByArtist, fetchDiag) = fetchTracksForArtists(sample, market, progressStep = 3, progressTotal = 4)
                 if (tracksByArtist.isEmpty()) {
-                    val hint = when {
-                        fetchDiag.http403 > 0 -> "Tap \"Log Out & Re-authorize\" to refresh permissions."
-                        fetchDiag.rateLimitSkips > 0 -> "Wait 60 seconds and tap Try Again."
-                        fetchDiag.empty > 0 -> "Search returned no tracks. Try tapping Build again."
-                        else -> "Wait 60 seconds and tap Try Again."
-                    }
                     _uiState.value = UiState.Error(
-                        "No tracks loaded from ${sample.size} artists.\n" +
-                        "[${fetchDiag.summary()}]\n\n$hint"
+                        "No tracks found in your Spotify library.\n\n" +
+                        "Save some songs in Spotify, then tap Try Again."
                     )
                     return@launch
                 }
@@ -152,6 +131,7 @@ class MainViewModel(
                 // Step 4 — shuffle + save to Spotify
                 stepName = "savePlaylist"
                 progress("Assembling your true shuffle playlist…", 4, 4)
+                val topArtistIds = library.topArtistIds.toSet()
                 val tracks = shuffleEngine.buildPlaylist(
                     followedArtists = library.followedArtists,
                     topArtistIds = topArtistIds,
@@ -161,7 +141,8 @@ class MainViewModel(
 
                 if (tracks.isEmpty()) {
                     _uiState.value = UiState.Error(
-                        "Not enough tracks to build a playlist.\nTry following more artists."
+                        "None of your followed artists had tracks in your library.\n\n" +
+                        "Save songs from artists you follow, then tap Try Again."
                     )
                     return@launch
                 }
@@ -219,95 +200,6 @@ class MainViewModel(
         artistCache.save(library)
         Log.d(TAG, "Artist library built: ${followed.size} artists, ${topIds.size} top")
         return library
-    }
-
-    private data class FetchDiagnostics(
-        val success: Int, val empty: Int, val http403: Int, val rateLimitSkips: Int, val other: Int
-    ) {
-        fun summary() = "ok=$success empty=$empty 403=$http403 429-skipped=$rateLimitSkips err=$other"
-    }
-
-    /**
-     * Fetches top tracks for [artists] one at a time with [TRACK_FETCH_DELAY_MS] between calls.
-     *
-     * Rate-limit strategy: the FIRST 429 triggers a single global window-reset wait
-     * (capped at [RATE_LIMIT_MAX_WAIT_SEC]). After that wait the Spotify rate-limit
-     * window resets and the remaining artists should succeed without further delays.
-     * A second 429 after the global wait skips that artist rather than waiting again.
-     */
-    private suspend fun fetchTracksForArtists(
-        artists: List<Artist>,
-        market: String,
-        progressStep: Int,
-        progressTotal: Int
-    ): Pair<Map<String, List<Track>>, FetchDiagnostics> {
-        val result = mutableMapOf<String, List<Track>>()
-        var success = 0; var empty = 0; var http403 = 0; var rateLimitSkips = 0; var other = 0
-        var rateLimitWindowReset = false   // true once we've done the one global wait
-
-        for ((index, artist) in artists.withIndex()) {
-            progress(
-                "Fetching tracks ${index + 1}/${artists.size} — ${artist.name}…",
-                progressStep,
-                progressTotal
-            )
-            try {
-                val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
-                if (tracks.isNotEmpty()) { result[artist.id] = tracks; success++ } else empty++
-            } catch (e: retrofit2.HttpException) {
-                when (e.code()) {
-                    404 -> { empty++; Log.d(TAG, "Artist ${artist.name} not found, skipping") }
-                    403 -> { http403++; Log.w(TAG, "HTTP 403 for ${artist.name}, skipping") }
-                    429 -> {
-                        if (!rateLimitWindowReset) {
-                            // Respect Spotify's Retry-After; cap only at hard max.
-                            val waitSec = minOf(
-                                e.response()?.headers()?.get("Retry-After")?.toLongOrNull() ?: 30L,
-                                RATE_LIMIT_MAX_WAIT_SEC
-                            )
-                            Log.w(TAG, "Rate limit hit — waiting ${waitSec}s to reset window")
-                            // Countdown so the user sees progress rather than a frozen screen
-                            var remaining = waitSec
-                            while (remaining > 0) {
-                                progress(
-                                    "Spotify rate limit — resuming in ${remaining}s…",
-                                    progressStep, progressTotal
-                                )
-                                val tick = minOf(remaining, 5L)
-                                delay(tick * 1_000L)
-                                remaining -= tick
-                            }
-                            rateLimitWindowReset = true
-                            try {
-                                val tracks = repository.getArtistTopTracks(artist.id, artist.name, market)
-                                if (tracks.isNotEmpty()) { result[artist.id] = tracks; success++ } else empty++
-                            } catch (e2: retrofit2.HttpException) {
-                                rateLimitSkips++
-                                Log.w(TAG, "Retry after window reset failed for ${artist.name}: HTTP ${e2.code()}")
-                            } catch (e2: Exception) {
-                                other++
-                                Log.w(TAG, "Retry after window reset failed for ${artist.name}: ${e2.message}")
-                            }
-                        } else {
-                            rateLimitSkips++
-                            Log.w(TAG, "Still rate limited on ${artist.name} after global wait — skipping")
-                        }
-                    }
-                    else -> { other++; Log.w(TAG, "HTTP ${e.code()} for ${artist.name}, skipping") }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                other++
-                Log.w(TAG, "Exception for ${artist.name}: ${e.message}, skipping")
-            }
-
-            delay(TRACK_FETCH_DELAY_MS)
-        }
-
-        val diag = FetchDiagnostics(success, empty, http403, rateLimitSkips, other)
-        Log.d(TAG, "Track fetch complete: ${diag.summary()}")
-        return Pair(result, diag)
     }
 
     /**
