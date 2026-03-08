@@ -115,9 +115,9 @@ private fun LoggedInContent(
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (state.cachedArtistCount > 0) {
-            // ── Cache status badge ──────────────────────────────────────────
+            // ── Library status badge ────────────────────────────────────────
             Text(
-                text = "Library: ${state.cachedArtistCount} artists cached",
+                text = "${state.cachedArtistCount} artists in library",
                 color = SpotifyGreen,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold
@@ -131,7 +131,7 @@ private fun LoggedInContent(
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "Builds are instant — no API calls needed.",
+                text = "Picks 15 random artists each build (~15s).",
                 color = SpotifyLightGray.copy(alpha = 0.55f),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
@@ -152,7 +152,7 @@ private fun LoggedInContent(
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyGreen),
                 border = BorderStroke(1.dp, SpotifyGreen)
             ) {
-                Text("Check for New Artists", fontWeight = FontWeight.Medium)
+                Text("Refresh Artist Library", fontWeight = FontWeight.Medium)
             }
         } else {
             // ── First-time empty state ──────────────────────────────────────
@@ -164,14 +164,14 @@ private fun LoggedInContent(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "The app will build a local library of your artists' tracks (~20 seconds). Future playlist builds are instant.",
+                text = "Loads your full artist list once (fast), then picks 15 random artists to build each playlist (~15s per build).",
                 color = SpotifyLightGray,
                 textAlign = TextAlign.Center,
                 fontSize = 14.sp
             )
             Spacer(modifier = Modifier.height(32.dp))
             SpotifyButton(
-                text = "Build Artist Library & Playlist",
+                text = "Set Up & Build Playlist",
                 onClick = { viewModel.buildPlaylist() }
             )
         }

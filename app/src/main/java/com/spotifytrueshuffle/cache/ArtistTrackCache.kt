@@ -4,26 +4,32 @@ import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.spotifytrueshuffle.api.Track
+import com.spotifytrueshuffle.api.Artist
 import java.io.File
 
 private const val TAG = "ArtistTrackCache"
-private const val CACHE_FILE = "artist_track_cache.json"
+
+// New filename so old incompatible track-based cache files are ignored
+private const val CACHE_FILE = "artist_library.json"
 
 /**
- * Persisted cache of artist → tracks mappings, stored as JSON in internal app storage.
+ * The persisted artist library — ALL of the user's followed artists plus their
+ * top-artist IDs (used for tier A/B shuffle logic).
  *
- * This avoids re-fetching track data from Spotify on every playlist build.
- * Only new artists (followed after the last cache update) need their tracks fetched.
- * File location: [Context.filesDir]/artist_track_cache.json
+ * Intentionally does NOT cache track data. Tracks are fetched fresh for a small
+ * random sample of artists on each playlist build (~15 calls, ~15s). This keeps
+ * every build feeling different and avoids Spotify rate-limit issues from trying
+ * to pre-fetch hundreds of artists at once.
  */
-data class TrackCacheData(
-    /** Epoch millis when this cache was last written. */
+data class ArtistLibrary(
     val lastRefreshedMs: Long = 0L,
-    /** Map of Spotify artist ID → list of their tracks. */
-    val artistTracks: Map<String, List<Track>> = emptyMap()
+    /** Every artist the user follows on Spotify. */
+    val followedArtists: List<Artist> = emptyList(),
+    /** Spotify IDs of the user's top artists (long + medium term). */
+    val topArtistIds: List<String> = emptyList()
 )
 
+/** Reads and writes the artist library to/from internal app storage. */
 class ArtistTrackCache(context: Context) {
 
     private val file = File(context.filesDir, CACHE_FILE)
@@ -31,29 +37,28 @@ class ArtistTrackCache(context: Context) {
 
     val isEmpty: Boolean get() = !file.exists() || file.length() == 0L
 
-    fun load(): TrackCacheData {
-        if (isEmpty) return TrackCacheData()
+    fun load(): ArtistLibrary {
+        if (isEmpty) return ArtistLibrary()
         return try {
-            val type = object : TypeToken<TrackCacheData>() {}.type
-            gson.fromJson<TrackCacheData>(file.readText(), type) ?: TrackCacheData()
+            val type = object : TypeToken<ArtistLibrary>() {}.type
+            gson.fromJson<ArtistLibrary>(file.readText(), type) ?: ArtistLibrary()
         } catch (e: Exception) {
-            Log.w(TAG, "Cache load failed — returning empty: ${e.message}")
-            TrackCacheData()
+            Log.w(TAG, "Artist library load failed — returning empty: ${e.message}")
+            ArtistLibrary()
         }
     }
 
-    fun save(data: TrackCacheData) {
+    fun save(library: ArtistLibrary) {
         try {
-            file.writeText(gson.toJson(data))
-            val trackCount = data.artistTracks.values.sumOf { it.size }
-            Log.d(TAG, "Cache saved: ${data.artistTracks.size} artists, $trackCount tracks")
+            file.writeText(gson.toJson(library))
+            Log.d(TAG, "Artist library saved: ${library.followedArtists.size} artists")
         } catch (e: Exception) {
-            Log.w(TAG, "Cache save failed: ${e.message}")
+            Log.w(TAG, "Artist library save failed: ${e.message}")
         }
     }
 
     fun clear() {
         file.delete()
-        Log.d(TAG, "Cache cleared")
+        Log.d(TAG, "Artist library cleared")
     }
 }
