@@ -43,38 +43,59 @@ fun HomeScreen(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                AppHeader()
+            Box(modifier = Modifier.fillMaxSize()) {
+                // ── Main centered content ────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    AppHeader()
 
-                Spacer(modifier = Modifier.height(56.dp))
+                    Spacer(modifier = Modifier.height(56.dp))
 
-                AnimatedContent(
-                    targetState = uiState,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
-                    label = "state"
-                ) { state ->
-                    when (state) {
-                        is MainViewModel.UiState.NotLoggedIn -> NotLoggedInContent(onLoginClick)
-                        is MainViewModel.UiState.LoggedIn    -> LoggedInContent(state, viewModel)
-                        is MainViewModel.UiState.Building    -> BuildingContent(state)
-                        is MainViewModel.UiState.Success     -> SuccessContent(state, viewModel)
-                        is MainViewModel.UiState.Error       -> ErrorContent(state, viewModel)
+                    AnimatedContent(
+                        targetState = uiState,
+                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        label = "state"
+                    ) { state ->
+                        when (state) {
+                            is MainViewModel.UiState.NotLoggedIn -> NotLoggedInContent(onLoginClick)
+                            is MainViewModel.UiState.LoggedIn    -> LoggedInContent(state, viewModel)
+                            is MainViewModel.UiState.Building    -> BuildingContent(state)
+                            is MainViewModel.UiState.Success     -> SuccessContent(state, viewModel)
+                            is MainViewModel.UiState.Error       -> ErrorContent(state, viewModel)
+                        }
                     }
                 }
-            }
 
-            // Settings bottom sheet — rendered on top of all content
-            if (settingsVisible) {
-                SettingsSheet(
-                    viewModel = viewModel,
-                    onDismiss = { viewModel.closeSettings() }
-                )
+                // ── Gear icon pinned to top-right corner ─────────────────────
+                if (uiState is MainViewModel.UiState.LoggedIn ||
+                    uiState is MainViewModel.UiState.Success) {
+                    IconButton(
+                        onClick = { viewModel.openSettings() },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 8.dp, end = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = SpotifyLightGray.copy(alpha = 0.7f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                // ── Settings bottom sheet ─────────────────────────────────────
+                if (settingsVisible) {
+                    SettingsSheet(
+                        viewModel = viewModel,
+                        onDismiss = { viewModel.closeSettings() }
+                    )
+                }
             }
         }
     }
@@ -125,21 +146,6 @@ private fun LoggedInContent(
     viewModel: MainViewModel
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        // ── Settings gear icon (top-right aligned) ──────────────────────────
-        Box(modifier = Modifier.fillMaxWidth()) {
-            IconButton(
-                onClick = { viewModel.openSettings() },
-                modifier = Modifier.align(Alignment.CenterEnd)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Settings",
-                    tint = SpotifyLightGray.copy(alpha = 0.6f),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        }
-
         if (state.cachedArtistCount > 0) {
             // ── Library status badge ────────────────────────────────────────
             Text(
