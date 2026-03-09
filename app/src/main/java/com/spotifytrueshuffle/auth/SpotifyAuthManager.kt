@@ -30,9 +30,6 @@ class SpotifyAuthManager(
     // Plain OkHttp client (no auth interceptor) for token endpoint calls
     private val httpClient = OkHttpClient()
 
-    // Held in memory during the auth flow; lost if the process is killed, which is fine
-    private var pendingCodeVerifier: String? = null
-
     fun isLoggedIn(): Boolean = tokenStorage.isLoggedIn()
 
     /**
@@ -41,7 +38,9 @@ class SpotifyAuthManager(
      */
     fun launchAuthFlow(activityContext: Context) {
         val verifier = PKCEUtils.generateCodeVerifier()
-        pendingCodeVerifier = verifier
+        // Persist across process death — real devices kill the host process while
+        // Chrome Custom Tab is in the foreground; without this the callback fails.
+        tokenStorage.pendingCodeVerifier = verifier
         val challenge = PKCEUtils.generateCodeChallenge(verifier)
 
         val authUri = Uri.parse(SpotifyConfig.AUTH_URL).buildUpon()
@@ -67,9 +66,9 @@ class SpotifyAuthManager(
      * Called from MainActivity when the redirect URI is received.
      */
     suspend fun handleCallback(code: String): Boolean = withContext(Dispatchers.IO) {
-        val verifier = pendingCodeVerifier
+        val verifier = tokenStorage.pendingCodeVerifier
         if (verifier == null) {
-            Log.e(TAG, "No pending code verifier — was launchAuthFlow called?")
+            Log.e(TAG, "No pending code verifier — was launchAuthFlow called? (process may have been killed)")
             return@withContext false
         }
 
@@ -81,8 +80,8 @@ class SpotifyAuthManager(
             .add("code_verifier", verifier)
             .build()
 
-        return@withContext exchangeTokens(body).also {
-            if (it) pendingCodeVerifier = null
+        return@withContext exchangeTokens(body).also { success ->
+            if (success) tokenStorage.pendingCodeVerifier = null  // clean up
         }
     }
 

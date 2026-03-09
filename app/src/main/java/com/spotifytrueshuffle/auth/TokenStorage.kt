@@ -2,25 +2,55 @@ package com.spotifytrueshuffle.auth
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.security.KeyStore
+
+private const val TAG = "TokenStorage"
+private const val PREFS_FILE = "spotify_secure_prefs"
 
 /**
  * Secure storage for Spotify OAuth tokens using AES-256 encrypted SharedPreferences.
  * Also stores the playlist ID so we can update the same playlist on subsequent runs.
+ *
+ * Self-healing: if the Android Keystore entry becomes stale (e.g. on some devices the
+ * Keystore key survives an app uninstall while the encrypted prefs file is wiped),
+ * the AEADBadTagException is caught, the corrupted data is cleared, and a fresh
+ * EncryptedSharedPreferences is created. The user will need to log in again but
+ * the app will not crash.
  */
 class TokenStorage(context: Context) {
 
-    private val prefs: SharedPreferences
+    private val prefs: SharedPreferences = createPrefs(context)
 
-    init {
+    private fun createPrefs(context: Context): SharedPreferences {
+        return try {
+            buildEncryptedPrefs(context)
+        } catch (e: Exception) {
+            // Known Android bug: Keystore entry survives app uninstall on some devices,
+            // but the encrypted prefs file is wiped — decryption fails with AEADBadTagException.
+            // Fix: delete the stale Keystore entry + prefs file and start fresh.
+            Log.w(TAG, "EncryptedSharedPreferences init failed — wiping stale keystore data: ${e.message}")
+            try {
+                context.deleteSharedPreferences(PREFS_FILE)
+                val ks = KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }
+                val alias = MasterKey.DEFAULT_MASTER_KEY_ALIAS
+                if (ks.containsAlias(alias)) ks.deleteEntry(alias)
+            } catch (wipeEx: Exception) {
+                Log.e(TAG, "Failed to wipe stale keystore entry: ${wipeEx.message}")
+            }
+            buildEncryptedPrefs(context)
+        }
+    }
+
+    private fun buildEncryptedPrefs(context: Context): SharedPreferences {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
-
-        prefs = EncryptedSharedPreferences.create(
+        return EncryptedSharedPreferences.create(
             context,
-            "spotify_secure_prefs",
+            PREFS_FILE,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
@@ -43,6 +73,17 @@ class TokenStorage(context: Context) {
     var playlistId: String?
         get() = prefs.getString(KEY_PLAYLIST_ID, null)
         set(value) = prefs.edit().putString(KEY_PLAYLIST_ID, value).apply()
+
+    /**
+     * PKCE code verifier — persisted across process death so the OAuth callback
+     * still succeeds on real devices where Android kills the process while
+     * Chrome Custom Tab is in the foreground.
+     * Cleared immediately after a successful token exchange.
+     */
+    var pendingCodeVerifier: String?
+        get() = prefs.getString(KEY_CODE_VERIFIER, null)
+        set(value) = if (value != null) prefs.edit().putString(KEY_CODE_VERIFIER, value).apply()
+                     else prefs.edit().remove(KEY_CODE_VERIFIER).apply()
 
     /** The scope string Spotify actually returned in the last token exchange (for diagnostics). */
     var grantedScopes: String?
@@ -75,5 +116,6 @@ class TokenStorage(context: Context) {
         const val KEY_TOKEN_EXPIRY = "token_expiry"
         const val KEY_PLAYLIST_ID = "playlist_id"
         const val KEY_GRANTED_SCOPES = "granted_scopes"
+        const val KEY_CODE_VERIFIER = "pkce_code_verifier"
     }
 }

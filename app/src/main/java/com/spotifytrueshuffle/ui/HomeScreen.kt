@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -28,41 +29,72 @@ import com.spotifytrueshuffle.ui.theme.SpotifyGreen
 import com.spotifytrueshuffle.ui.theme.SpotifyLightGray
 import com.spotifytrueshuffle.ui.theme.SpotifyTrueShuffleTheme
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: MainViewModel,
     onLoginClick: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val settingsVisible by viewModel.settingsVisible.collectAsState()
 
     SpotifyTrueShuffleTheme {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                AppHeader()
+            Box(modifier = Modifier.fillMaxSize()) {
+                // ── Main centered content ────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    AppHeader()
 
-                Spacer(modifier = Modifier.height(56.dp))
+                    Spacer(modifier = Modifier.height(56.dp))
 
-                AnimatedContent(
-                    targetState = uiState,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
-                    label = "state"
-                ) { state ->
-                    when (state) {
-                        is MainViewModel.UiState.NotLoggedIn -> NotLoggedInContent(onLoginClick)
-                        is MainViewModel.UiState.LoggedIn    -> LoggedInContent(state, viewModel)
-                        is MainViewModel.UiState.Building    -> BuildingContent(state)
-                        is MainViewModel.UiState.Success     -> SuccessContent(state, viewModel)
-                        is MainViewModel.UiState.Error       -> ErrorContent(state, viewModel)
+                    AnimatedContent(
+                        targetState = uiState,
+                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        label = "state"
+                    ) { state ->
+                        when (state) {
+                            is MainViewModel.UiState.NotLoggedIn -> NotLoggedInContent(onLoginClick)
+                            is MainViewModel.UiState.LoggedIn    -> LoggedInContent(state, viewModel)
+                            is MainViewModel.UiState.Building    -> BuildingContent(state)
+                            is MainViewModel.UiState.Success     -> SuccessContent(state, viewModel)
+                            is MainViewModel.UiState.Error       -> ErrorContent(state, viewModel)
+                        }
                     }
+                }
+
+                // ── Gear icon pinned to top-right corner ─────────────────────
+                if (uiState is MainViewModel.UiState.LoggedIn ||
+                    uiState is MainViewModel.UiState.Success) {
+                    IconButton(
+                        onClick = { viewModel.openSettings() },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 8.dp, end = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = SpotifyLightGray.copy(alpha = 0.7f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                // ── Settings bottom sheet ─────────────────────────────────────
+                if (settingsVisible) {
+                    SettingsSheet(
+                        viewModel = viewModel,
+                        onDismiss = { viewModel.closeSettings() }
+                    )
                 }
             }
         }
@@ -175,71 +207,6 @@ private fun LoggedInContent(
                 onClick = { viewModel.buildPlaylist() }
             )
         }
-
-        Spacer(modifier = Modifier.height(20.dp))
-        CooldownStepper(viewModel)
-
-        Spacer(modifier = Modifier.height(8.dp))
-        TextButton(onClick = { viewModel.logout() }) {
-            Text("Log out", color = SpotifyLightGray.copy(alpha = 0.5f))
-        }
-    }
-}
-
-/**
- * A small inline stepper that lets the user choose how many past playlists
- * must pass before an artist or track is eligible to appear again.
- *
- *   Repeat cooldown:  [−]  5  [+]  playlists
- */
-@Composable
-private fun CooldownStepper(viewModel: MainViewModel) {
-    val count by viewModel.cooldownCount.collectAsState()
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Text(
-            text = "Repeat cooldown:",
-            color = SpotifyLightGray.copy(alpha = 0.7f),
-            fontSize = 13.sp
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        // Decrement
-        TextButton(
-            onClick = { viewModel.setCooldownCount(count - 1) },
-            enabled = count > 1,
-            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-            modifier = Modifier.defaultMinSize(minWidth = 32.dp, minHeight = 32.dp)
-        ) {
-            Text("−", fontSize = 18.sp, color = if (count > 1) SpotifyGreen else SpotifyLightGray.copy(alpha = 0.3f))
-        }
-        // Current value
-        Text(
-            text = count.toString(),
-            color = Color.White,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.widthIn(min = 20.dp),
-            textAlign = TextAlign.Center
-        )
-        // Increment
-        TextButton(
-            onClick = { viewModel.setCooldownCount(count + 1) },
-            enabled = count < 10,
-            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-            modifier = Modifier.defaultMinSize(minWidth = 32.dp, minHeight = 32.dp)
-        ) {
-            Text("+", fontSize = 18.sp, color = if (count < 10) SpotifyGreen else SpotifyLightGray.copy(alpha = 0.3f))
-        }
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = "playlists",
-            color = SpotifyLightGray.copy(alpha = 0.7f),
-            fontSize = 13.sp
-        )
     }
 }
 
@@ -306,6 +273,19 @@ private fun SuccessContent(
             color = SpotifyLightGray,
             textAlign = TextAlign.Center
         )
+
+        // ── Tier breakdown ───────────────────────────────────────────────────
+        val tierText = buildTierText(state)
+        if (tierText.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = tierText,
+                color = SpotifyLightGray.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center
+            )
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
         SpotifyButton(
             text = "Open in Spotify",
@@ -323,11 +303,21 @@ private fun SuccessContent(
         ) {
             Text("Build New Playlist")
         }
-        Spacer(modifier = Modifier.height(16.dp))
-        TextButton(onClick = { viewModel.logout() }) {
-            Text("Log out", color = SpotifyLightGray.copy(alpha = 0.5f))
+        Spacer(modifier = Modifier.height(8.dp))
+        TextButton(onClick = { viewModel.backToHome() }) {
+            Text("← Back to home", color = SpotifyLightGray.copy(alpha = 0.6f), fontSize = 14.sp)
         }
     }
+}
+
+/** Builds a human-readable tier breakdown string, omitting any zero-count tiers. */
+private fun buildTierText(state: MainViewModel.UiState.Success): String {
+    val parts = buildList {
+        if (state.tierCCount > 0) add("${state.tierCCount} discovery")
+        if (state.tierBCount > 0) add("${state.tierBCount} familiar")
+        if (state.tierACount > 0) add("${state.tierACount} top")
+    }
+    return parts.joinToString(" · ")
 }
 
 @Composable

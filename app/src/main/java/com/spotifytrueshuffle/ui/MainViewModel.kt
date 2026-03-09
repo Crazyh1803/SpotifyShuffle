@@ -4,12 +4,12 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.spotifytrueshuffle.SpotifyConfig
 import com.spotifytrueshuffle.api.Artist
 import com.spotifytrueshuffle.api.SpotifyRepository
 import com.spotifytrueshuffle.api.Track
 import com.spotifytrueshuffle.auth.SpotifyAuthManager
 import com.spotifytrueshuffle.auth.TokenStorage
+import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
@@ -31,7 +31,8 @@ class MainViewModel(
     private val tokenStorage: TokenStorage,
     private val shuffleEngine: TrueShuffleEngine,
     private val artistCache: ArtistTrackCache,
-    private val historyStorage: ShuffleHistoryStorage
+    private val historyStorage: ShuffleHistoryStorage,
+    private val appSettings: AppSettingsStorage
 ) : ViewModel() {
 
     sealed class UiState {
@@ -46,7 +47,13 @@ class MainViewModel(
             val playlistUrl: String,
             val trackCount: Int,
             val durationMinutes: Int,
-            val artistCount: Int
+            val artistCount: Int,
+            /** Number of tracks from Tier C (pure discovery artists). */
+            val tierCCount: Int = 0,
+            /** Number of tracks from Tier B (familiar non-top artists). */
+            val tierBCount: Int = 0,
+            /** Number of tracks from Tier A (top artists). */
+            val tierACount: Int = 0
         ) : UiState()
         data class Error(val message: String) : UiState()
     }
@@ -58,15 +65,51 @@ class MainViewModel(
     private val _cooldownCount = MutableStateFlow(historyStorage.load().cooldownPlaylists)
     val cooldownCount: StateFlow<Int> = _cooldownCount.asStateFlow()
 
+    /** 0–100 discovery bias slider (maps to Tier C weight in the engine). */
+    private val _discoveryBias = MutableStateFlow(appSettings.load().discoveryBias)
+    val discoveryBias: StateFlow<Int> = _discoveryBias.asStateFlow()
+
+    /** Target playlist duration in milliseconds. */
+    private val _playlistDurationMs = MutableStateFlow(appSettings.load().playlistDurationMs)
+    val playlistDurationMs: StateFlow<Long> = _playlistDurationMs.asStateFlow()
+
+    /** Whether the Settings bottom sheet is currently visible. */
+    private val _settingsVisible = MutableStateFlow(false)
+    val settingsVisible: StateFlow<Boolean> = _settingsVisible.asStateFlow()
+
     init {
         _uiState.value = if (authManager.isLoggedIn()) loggedInState() else UiState.NotLoggedIn
     }
+
+    // ── Settings ──────────────────────────────────────────────────────────────
+
+    fun openSettings() { _settingsVisible.value = true }
+    fun closeSettings() { _settingsVisible.value = false }
 
     /** Updates the cooldown setting and persists it immediately. */
     fun setCooldownCount(n: Int) {
         val clamped = n.coerceIn(1, 10)
         _cooldownCount.value = clamped
         historyStorage.saveCooldownCount(clamped)
+    }
+
+    /** Updates the discovery bias (0–100) and persists it. */
+    fun setDiscoveryBias(bias: Int) {
+        val clamped = bias.coerceIn(0, 100)
+        _discoveryBias.value = clamped
+        appSettings.saveDiscoveryBias(clamped)
+    }
+
+    /** Updates the target playlist duration (ms) and persists it. */
+    fun setPlaylistDuration(ms: Long) {
+        _playlistDurationMs.value = ms
+        appSettings.savePlaylistDuration(ms)
+    }
+
+    /** Clears cooldown history (resets artist/track suppression) without touching the cooldown count setting. */
+    fun clearCooldownHistory() {
+        historyStorage.clearHistory()
+        Log.d(TAG, "Cooldown history cleared by user")
     }
 
     // ── Auth ─────────────────────────────────────────────────────────────────
@@ -86,6 +129,11 @@ class MainViewModel(
 
     fun dismissError() {
         _uiState.value = if (authManager.isLoggedIn()) loggedInState() else UiState.NotLoggedIn
+    }
+
+    /** Resets the UI to the LoggedIn state without starting a build. */
+    fun backToHome() {
+        _uiState.value = loggedInState()
     }
 
     // ── Build Playlist ───────────────────────────────────────────────────────
@@ -159,6 +207,10 @@ class MainViewModel(
                 Log.d(TAG, "Cooldown N=${history.cooldownPlaylists}: " +
                     "${cooldown.first.size} tracks, ${cooldown.second.size} artists suppressed")
 
+                val currentBias = _discoveryBias.value
+                val currentDurationMs = _playlistDurationMs.value
+                Log.d(TAG, "Building with discoveryBias=$currentBias, durationMs=$currentDurationMs")
+
                 val tracks = shuffleEngine.buildPlaylist(
                     followedArtists = library.followedArtists,
                     topArtistIds = topArtistIds,
@@ -167,7 +219,8 @@ class MainViewModel(
                     likedTrackIds = trackPool.likedTrackIds,
                     cooldownTrackIds = cooldown.first,
                     cooldownArtistIds = cooldown.second,
-                    targetDurationMs = SpotifyConfig.TARGET_DURATION_MS
+                    discoveryBias = currentBias,
+                    targetDurationMs = currentDurationMs
                 )
 
                 if (tracks.isEmpty()) {
@@ -184,14 +237,30 @@ class MainViewModel(
                 val playlistTrackIds = tracks.map { it.id }
                 val playlistArtistIds = tracks.flatMap { it.artists }.map { it.id }.distinct()
                 historyStorage.recordPlaylist(playlistTrackIds, playlistArtistIds, history.cooldownPlaylists)
+
+                // Count tier membership for the success screen breakdown.
+                // Each track is attributed to its primary artist (first in list).
+                val tierCCount = tracks.count { track ->
+                    track.artists.firstOrNull()?.id in trackPool.discoveryArtistIds
+                }
+                val tierACount = tracks.count { track ->
+                    track.artists.firstOrNull()?.id in topArtistIds
+                }
+                val tierBCount = tracks.size - tierCCount - tierACount
+
                 val totalDurationMs = tracks.sumOf { it.durationMs.toLong() }
                 val artistsRepresented = tracks.flatMap { it.artists }.map { it.id }.toSet().size
+
+                Log.d(TAG, "Tier breakdown: C=$tierCCount, B=$tierBCount, A=$tierACount")
 
                 _uiState.value = UiState.Success(
                     playlistUrl = playlistUrl,
                     trackCount = tracks.size,
                     durationMinutes = (totalDurationMs / 60_000).toInt(),
-                    artistCount = artistsRepresented
+                    artistCount = artistsRepresented,
+                    tierCCount = tierCCount,
+                    tierBCount = tierBCount,
+                    tierACount = tierACount
                 )
 
             } catch (e: Exception) {
@@ -346,9 +415,10 @@ class MainViewModelFactory(
     private val tokenStorage: TokenStorage,
     private val shuffleEngine: TrueShuffleEngine,
     private val trackCache: ArtistTrackCache,
-    private val historyStorage: ShuffleHistoryStorage
+    private val historyStorage: ShuffleHistoryStorage,
+    private val appSettings: AppSettingsStorage
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage) as T
+        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings) as T
 }

@@ -94,6 +94,16 @@ class ShuffleHistoryStorage(context: Context) {
         return trackIds to artistIds
     }
 
+    /**
+     * Clears the recent playlist history (resets cooldown suppression) while keeping
+     * the user's cooldown count preference intact.
+     */
+    fun clearHistory() {
+        val current = load()
+        save(current.copy(recentPlaylists = emptyList()))
+        Log.d(TAG, "Cooldown history cleared (cooldownPlaylists setting kept: ${current.cooldownPlaylists})")
+    }
+
     private fun save(history: ShuffleHistory) {
         try {
             file.writeText(gson.toJson(history))
