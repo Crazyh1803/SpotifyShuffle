@@ -24,7 +24,4 @@ object SpotifyConfig {
     const val SCOPES = "user-read-private user-follow-read user-top-read user-library-read playlist-modify-public playlist-modify-private"
 
     const val PLAYLIST_NAME = "True Shuffle — All Artists"
-
-    /** Target playlist duration: 2 hours */
-    const val TARGET_DURATION_MS = 2L * 60 * 60 * 1000
 }

@@ -19,14 +19,20 @@ import kotlin.random.Random
  * Tier system (three tiers when discovery data is available):
  *   Tier A — user's top artists (frequently heard — included, but deprioritized)
  *   Tier B — followed artists with library tracks but NOT in top artists
- *             (somewhat familiar — appears occasionally)
+ *             (somewhat familiar — appears often; 4× more slots than A)
  *   Tier C — "discovery" artists: followed artists whose tracks came ONLY from
  *             the gap-fill source (never liked/saved — pure discovery)
- *             (given the most slots)
+ *             (count controlled by discoveryBias slider, 0–100)
  *
- * Ratios:
- *   With Tier C:    C:B:A = 3:1:1 per cycle → 60 % discovery, 20 % familiar, 20 % top
- *   Without Tier C: B:A   = 4:1   per cycle → 80 % non-top   (up from the old 67 %)
+ * The B:A ratio is always fixed at 4:1. Only the C count varies with the slider.
+ *
+ * Discovery bias → tier ratios (cPerCycle : bPerCycle : aPerCycle):
+ *   0–15 %   →  0 : 4 : 1  (80 % B, 20 % A — no discovery)
+ *   16–35 %  →  1 : 4 : 1  (17 % C, 67 % B, 17 % A)
+ *   36–55 %  →  2 : 4 : 1  (29 % C, 57 % B, 14 % A)
+ *   56–75 %  →  3 : 4 : 1  (38 % C, 50 % B, 13 % A)  ← default (bias = 60)
+ *   76–90 %  →  5 : 4 : 1  (50 % C, 40 % B, 10 % A)
+ *   91–100 % →  9 : 4 : 1  (64 % C, 29 % B,  7 % A)
  */
 class TrueShuffleEngine {
 
@@ -47,6 +53,7 @@ class TrueShuffleEngine {
      * @param cooldownTrackIds   Track IDs that appeared in the last N playlists. Even if
      *                           a cooldown artist is used as a fallback, their cooldown
      *                           tracks are de-prioritised in selectTrack.
+     * @param discoveryBias      0–100 slider value controlling Tier C weight. Default 60.
      * @param targetDurationMs   Total duration to aim for (default 2 hours)
      * @return Ordered list of tracks for the playlist
      */
@@ -58,6 +65,7 @@ class TrueShuffleEngine {
         likedTrackIds: Set<String> = emptySet(),
         cooldownArtistIds: Set<String> = emptySet(),
         cooldownTrackIds: Set<String> = emptySet(),
+        discoveryBias: Int = 60,
         targetDurationMs: Long = 2L * 60 * 60 * 1000
     ): List<Track> {
         // Only keep artists for whom we actually have tracks
@@ -72,8 +80,9 @@ class TrueShuffleEngine {
         val cooldownFallbackArtists = artistsWithTracks.filter { it.id in cooldownArtistIds }
 
         // Build the tier-interleaved order for fresh artists, then append cooldown as fallback.
-        val orderedArtists = buildOrderedArtists(freshArtists, topArtistIds, discoveryArtistIds) +
-            cooldownFallbackArtists.shuffled()
+        val orderedArtists = buildOrderedArtists(
+            freshArtists, topArtistIds, discoveryArtistIds, discoveryBias
+        ) + cooldownFallbackArtists.shuffled()
 
         // Pick one track per artist, stopping when we reach the target duration
         val playlist = mutableListOf<Track>()
@@ -110,23 +119,48 @@ class TrueShuffleEngine {
     }
 
     /**
+     * Maps a 0–100 discovery bias value to tier cycle counts (cPerCycle, bPerCycle, aPerCycle).
+     * bPerCycle and aPerCycle are always fixed at 4 and 1 to maintain the 4:1 B:A preference.
+     * Only cPerCycle increases as the slider moves right.
+     *
+     * @return Triple(cPerCycle, bPerCycle, aPerCycle)
+     */
+    fun computeTierWeights(bias: Int): Triple<Int, Int, Int> {
+        val cPerCycle = when {
+            bias <= 15  -> 0
+            bias <= 35  -> 1
+            bias <= 55  -> 2
+            bias <= 75  -> 3
+            bias <= 90  -> 5
+            else        -> 9
+        }
+        return Triple(cPerCycle, 4, 1)
+    }
+
+    /**
      * Splits [artists] into up to three tiers and interleaves them so discovery
      * artists appear most often, top artists least often.
      */
     private fun buildOrderedArtists(
         artists: List<Artist>,
         topArtistIds: Set<String>,
-        discoveryArtistIds: Set<String>
+        discoveryArtistIds: Set<String>,
+        discoveryBias: Int = 60
     ): List<Artist> {
         val tierA = artists.filter { it.id in topArtistIds }.shuffled()
         val tierC = artists.filter { it.id in discoveryArtistIds }.shuffled()
         val tierB = artists.filter { it.id !in topArtistIds && it.id !in discoveryArtistIds }.shuffled()
 
         return if (tierC.isNotEmpty()) {
-            // C, C, C, B, A, C, C, C, B, A, … — heavy discovery bias
-            interleave3(tierC, tierB, tierA, cPerCycle = 3, bPerCycle = 1, aPerCycle = 1)
+            val (cPerCycle, bPerCycle, aPerCycle) = computeTierWeights(discoveryBias)
+            if (cPerCycle == 0) {
+                // Bias is so low that C is disabled — treat same as no-discovery path
+                interleave(tierA, tierB, aPerCycle = aPerCycle, bPerCycle = bPerCycle)
+            } else {
+                interleave3(tierC, tierB, tierA, cPerCycle = cPerCycle, bPerCycle = bPerCycle, aPerCycle = aPerCycle)
+            }
         } else {
-            // B, B, B, B, A, B, B, B, B, A, … — strongly non-top
+            // No discovery artists — use B:A = 4:1 interleave
             interleave(tierA, tierB, aPerCycle = 1, bPerCycle = 4)
         }
     }
