@@ -17,6 +17,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -43,58 +46,72 @@ fun HomeScreen(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                // ── Main centered content ────────────────────────────────────
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    AppHeader()
+            // ── Setup / Walkthrough screens are fullscreen — skip normal layout ──
+            if (uiState is MainViewModel.UiState.Setup) {
+                var showWalkthrough by remember { mutableStateOf(false) }
+                if (showWalkthrough) {
+                    WalkthroughScreen(onBack = { showWalkthrough = false })
+                } else {
+                    SetupScreen(
+                        onContinue = { clientId -> viewModel.completeSetup(clientId) },
+                        onViewGuide = { showWalkthrough = true }
+                    )
+                }
+            } else {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // ── Main centered content ────────────────────────────────
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        AppHeader()
 
-                    Spacer(modifier = Modifier.height(56.dp))
+                        Spacer(modifier = Modifier.height(56.dp))
 
-                    AnimatedContent(
-                        targetState = uiState,
-                        transitionSpec = { fadeIn() togetherWith fadeOut() },
-                        label = "state"
-                    ) { state ->
-                        when (state) {
-                            is MainViewModel.UiState.NotLoggedIn -> NotLoggedInContent(onLoginClick)
-                            is MainViewModel.UiState.LoggedIn    -> LoggedInContent(state, viewModel)
-                            is MainViewModel.UiState.Building    -> BuildingContent(state)
-                            is MainViewModel.UiState.Success     -> SuccessContent(state, viewModel)
-                            is MainViewModel.UiState.Error       -> ErrorContent(state, viewModel)
+                        AnimatedContent(
+                            targetState = uiState,
+                            transitionSpec = { fadeIn() togetherWith fadeOut() },
+                            label = "state"
+                        ) { state ->
+                            when (state) {
+                                is MainViewModel.UiState.Setup       -> { /* handled above */ }
+                                is MainViewModel.UiState.NotLoggedIn -> NotLoggedInContent(onLoginClick)
+                                is MainViewModel.UiState.LoggedIn    -> LoggedInContent(state, viewModel)
+                                is MainViewModel.UiState.Building    -> BuildingContent(state)
+                                is MainViewModel.UiState.Success     -> SuccessContent(state, viewModel)
+                                is MainViewModel.UiState.Error       -> ErrorContent(state, viewModel)
+                            }
                         }
                     }
-                }
 
-                // ── Gear icon pinned to top-right corner ─────────────────────
-                if (uiState is MainViewModel.UiState.LoggedIn ||
-                    uiState is MainViewModel.UiState.Success) {
-                    IconButton(
-                        onClick = { viewModel.openSettings() },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 8.dp, end = 8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = SpotifyLightGray.copy(alpha = 0.7f),
-                            modifier = Modifier.size(24.dp)
+                    // ── Gear icon pinned to top-right corner ─────────────────
+                    if (uiState is MainViewModel.UiState.LoggedIn ||
+                        uiState is MainViewModel.UiState.Success) {
+                        IconButton(
+                            onClick = { viewModel.openSettings() },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 8.dp, end = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = SpotifyLightGray.copy(alpha = 0.7f),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+
+                    // ── Settings bottom sheet ─────────────────────────────────
+                    if (settingsVisible) {
+                        SettingsSheet(
+                            viewModel = viewModel,
+                            onDismiss = { viewModel.closeSettings() }
                         )
                     }
-                }
-
-                // ── Settings bottom sheet ─────────────────────────────────────
-                if (settingsVisible) {
-                    SettingsSheet(
-                        viewModel = viewModel,
-                        onDismiss = { viewModel.closeSettings() }
-                    )
                 }
             }
         }

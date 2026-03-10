@@ -1,12 +1,9 @@
 package com.spotifytrueshuffle
 
 object SpotifyConfig {
-    /**
-     * Paste your Spotify app's Client ID here.
-     * Create one at: https://developer.spotify.com/dashboard
-     * Add redirect URI: com.spotifytrueshuffle://callback
-     */
-    const val CLIENT_ID = "d78040ff13d64a558f845bdf22d02f08"
+    // CLIENT_ID is no longer hardcoded here.
+    // Users enter their own Spotify Developer Client ID on first launch.
+    // It is stored in AppSettings and injected into SpotifyAuthManager as a lambda.
 
     const val REDIRECT_URI = "com.spotifytrueshuffle://callback"
     const val AUTH_URL = "https://accounts.spotify.com/authorize"

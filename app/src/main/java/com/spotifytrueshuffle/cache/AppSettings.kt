@@ -12,11 +12,14 @@ private const val SETTINGS_FILE = "app_settings.json"
 /**
  * User-configurable app settings persisted to internal storage.
  *
+ * @param clientId         Spotify Developer App Client ID entered by the user on first launch.
+ *                         Empty string means setup has not been completed yet.
  * @param discoveryBias    0–100 slider position: 0 = all familiar, 100 = all discovery.
  *                         Default 60 maps to cPerCycle=3 (38 % C, 50 % B, 13 % A).
  * @param playlistDurationMs  Target playlist length in milliseconds. Default 2 hours.
  */
 data class AppSettings(
+    val clientId: String = "",
     val discoveryBias: Int = 60,
     val playlistDurationMs: Long = 2L * 60 * 60 * 1000
 )
@@ -46,6 +49,10 @@ class AppSettingsStorage(context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "Settings save failed: ${e.message}")
         }
+    }
+
+    fun saveClientId(id: String) {
+        save(load().copy(clientId = id))
     }
 
     fun saveDiscoveryBias(bias: Int) {

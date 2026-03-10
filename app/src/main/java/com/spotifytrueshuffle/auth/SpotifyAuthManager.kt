@@ -25,7 +25,9 @@ private const val TAG = "SpotifyAuth"
  * 5. [refreshTokenIfNeeded] is called before each API request
  */
 class SpotifyAuthManager(
-    private val tokenStorage: TokenStorage
+    private val tokenStorage: TokenStorage,
+    /** Returns the Spotify Client ID entered by the user during first-time setup. */
+    private val getClientId: () -> String
 ) {
     // Plain OkHttp client (no auth interceptor) for token endpoint calls
     private val httpClient = OkHttpClient()
@@ -44,7 +46,7 @@ class SpotifyAuthManager(
         val challenge = PKCEUtils.generateCodeChallenge(verifier)
 
         val authUri = Uri.parse(SpotifyConfig.AUTH_URL).buildUpon()
-            .appendQueryParameter("client_id", SpotifyConfig.CLIENT_ID)
+            .appendQueryParameter("client_id", getClientId())
             .appendQueryParameter("response_type", "code")
             .appendQueryParameter("redirect_uri", SpotifyConfig.REDIRECT_URI)
             .appendQueryParameter("scope", SpotifyConfig.SCOPES)
@@ -76,7 +78,7 @@ class SpotifyAuthManager(
             .add("grant_type", "authorization_code")
             .add("code", code)
             .add("redirect_uri", SpotifyConfig.REDIRECT_URI)
-            .add("client_id", SpotifyConfig.CLIENT_ID)
+            .add("client_id", getClientId())
             .add("code_verifier", verifier)
             .build()
 
@@ -100,7 +102,7 @@ class SpotifyAuthManager(
         val body = FormBody.Builder()
             .add("grant_type", "refresh_token")
             .add("refresh_token", refreshToken)
-            .add("client_id", SpotifyConfig.CLIENT_ID)
+            .add("client_id", getClientId())
             .build()
 
         val success = exchangeTokens(body)

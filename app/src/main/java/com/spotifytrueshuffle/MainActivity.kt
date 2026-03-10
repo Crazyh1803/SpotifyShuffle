@@ -40,13 +40,13 @@ class MainActivity : ComponentActivity() {
 
         // ── Dependency wiring ────────────────────────────────────────────────
         val tokenStorage = TokenStorage(applicationContext)
-        authManager = SpotifyAuthManager(tokenStorage)
+        val appSettings = AppSettingsStorage(applicationContext)
+        authManager = SpotifyAuthManager(tokenStorage) { appSettings.load().clientId }
         val apiService = buildApiService(tokenStorage)
         val repository = SpotifyRepository(apiService, authManager, tokenStorage)
         val shuffleEngine = TrueShuffleEngine()
         val trackCache = ArtistTrackCache(applicationContext)
         val historyStorage = ShuffleHistoryStorage(applicationContext)
-        val appSettings = AppSettingsStorage(applicationContext)
 
         viewModel = ViewModelProvider(
             this,

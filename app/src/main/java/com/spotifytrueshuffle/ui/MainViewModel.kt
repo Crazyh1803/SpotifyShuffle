@@ -36,6 +36,8 @@ class MainViewModel(
 ) : ViewModel() {
 
     sealed class UiState {
+        /** First-time launch: user hasn't entered their Spotify Developer Client ID yet. */
+        object Setup : UiState()
         object NotLoggedIn : UiState()
         /** Logged in and ready. Shows artist library size if available. */
         data class LoggedIn(
@@ -78,13 +80,36 @@ class MainViewModel(
     val settingsVisible: StateFlow<Boolean> = _settingsVisible.asStateFlow()
 
     init {
-        _uiState.value = if (authManager.isLoggedIn()) loggedInState() else UiState.NotLoggedIn
+        val settings = appSettings.load()
+        _uiState.value = when {
+            settings.clientId.isEmpty() -> UiState.Setup
+            authManager.isLoggedIn()    -> loggedInState()
+            else                        -> UiState.NotLoggedIn
+        }
     }
 
     // ── Settings ──────────────────────────────────────────────────────────────
 
     fun openSettings() { _settingsVisible.value = true }
     fun closeSettings() { _settingsVisible.value = false }
+
+    /**
+     * Called when the user finishes entering their Client ID on the Setup screen.
+     * Saves the ID and transitions to the normal NotLoggedIn home screen.
+     */
+    fun completeSetup(clientId: String) {
+        appSettings.saveClientId(clientId.trim())
+        _uiState.value = UiState.NotLoggedIn
+    }
+
+    /**
+     * Returns the user to the Setup screen so they can change their Client ID.
+     * Closes the settings sheet first if it's open.
+     */
+    fun changeClientId() {
+        _settingsVisible.value = false
+        _uiState.value = UiState.Setup
+    }
 
     /** Updates the cooldown setting and persists it immediately. */
     fun setCooldownCount(n: Int) {

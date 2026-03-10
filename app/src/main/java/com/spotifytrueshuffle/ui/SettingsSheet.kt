@@ -163,6 +163,18 @@ fun SettingsSheet(
                 )
             }
 
+            // ── Change Client ID ─────────────────────────────────────────────
+            TextButton(
+                onClick = { viewModel.changeClientId() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Change Spotify Client ID",
+                    color = SpotifyLightGray.copy(alpha = 0.7f),
+                    fontSize = 14.sp
+                )
+            }
+
             // ── Log Out ──────────────────────────────────────────────────────
             TextButton(
                 onClick = {
