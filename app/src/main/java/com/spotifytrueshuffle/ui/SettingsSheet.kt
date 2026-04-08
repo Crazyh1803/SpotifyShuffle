@@ -1,17 +1,33 @@
 package com.spotifytrueshuffle.ui
 
+import android.Manifest
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spotifytrueshuffle.ui.theme.SpotifyGreen
 import com.spotifytrueshuffle.ui.theme.SpotifyLightGray
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Duration preset options shown in the segmented button row. */
 private val DURATION_OPTIONS = listOf(
@@ -36,9 +52,19 @@ fun SettingsSheet(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
-    val cooldownCount    by viewModel.cooldownCount.collectAsState()
-    val discoveryBias    by viewModel.discoveryBias.collectAsState()
-    val playlistDurationMs by viewModel.playlistDurationMs.collectAsState()
+    val cooldownCount          by viewModel.cooldownCount.collectAsState()
+    val artistCooldownPlaylists by viewModel.artistCooldownPlaylists.collectAsState()
+    val discoveryBias          by viewModel.discoveryBias.collectAsState()
+    val playlistDurationMs     by viewModel.playlistDurationMs.collectAsState()
+    val autoRebuildDays        by viewModel.autoRebuildDays.collectAsState()
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // Launcher for POST_NOTIFICATIONS runtime permission (Android 13+ / API 33+)
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* granted or denied — WorkManager runs regardless; just no notification if denied */ }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -48,6 +74,7 @@ fun SettingsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 40.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
@@ -59,8 +86,8 @@ fun SettingsSheet(
                 color = Color.White
             )
 
-            // ── Repeat Cooldown ──────────────────────────────────────────────
-            SettingSection(title = "Repeat cooldown") {
+            // ── Song Repeat Cooldown ─────────────────────────────────────────
+            SettingSection(title = "Song repeat cooldown") {
                 Text(
                     text = "$cooldownCount ${if (cooldownCount == 1) "playlist" else "playlists"}",
                     color = SpotifyGreen,
@@ -86,6 +113,36 @@ fun SettingsSheet(
                 ) {
                     Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                     Text("10", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                }
+            }
+
+            // ── Artist Repeat Cooldown ───────────────────────────────────────
+            SettingSection(title = "Artist repeat cooldown") {
+                Text(
+                    text = "$artistCooldownPlaylists ${if (artistCooldownPlaylists == 1) "playlist" else "playlists"}",
+                    color = SpotifyGreen,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Slider(
+                    value = artistCooldownPlaylists.toFloat(),
+                    onValueChange = { viewModel.setArtistCooldownPlaylists(it.toInt()) },
+                    valueRange = 1f..20f,
+                    steps = 18,  // integer steps between 1 and 20 (20 - 1 - 1 = 18)
+                    colors = SliderDefaults.colors(
+                        thumbColor = SpotifyGreen,
+                        activeTrackColor = SpotifyGreen,
+                        inactiveTrackColor = SpotifyLightGray.copy(alpha = 0.3f),
+                        activeTickColor = Color.Transparent,
+                        inactiveTickColor = Color.Transparent
+                    )
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text("20", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                 }
             }
 
@@ -143,10 +200,112 @@ fun SettingsSheet(
                 }
             }
 
+            // ── Auto-rebuild ─────────────────────────────────────────────────
+            SettingSection(title = "Auto-rebuild") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { viewModel.setAutoRebuildDays(autoRebuildDays - 1) },
+                        enabled = autoRebuildDays > 0
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ChevronLeft,
+                            contentDescription = "Decrease interval",
+                            tint = if (autoRebuildDays > 0) SpotifyGreen
+                                   else SpotifyLightGray.copy(alpha = 0.3f)
+                        )
+                    }
+
+                    Text(
+                        text = if (autoRebuildDays == 0) "Off"
+                               else "Every $autoRebuildDays ${if (autoRebuildDays == 1) "day" else "days"}",
+                        color = if (autoRebuildDays == 0) SpotifyLightGray else SpotifyGreen,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    IconButton(
+                        onClick = {
+                            if (autoRebuildDays == 0 &&
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            viewModel.setAutoRebuildDays(autoRebuildDays + 1)
+                        },
+                        enabled = autoRebuildDays < 30
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Increase interval",
+                            tint = if (autoRebuildDays < 30) SpotifyGreen
+                                   else SpotifyLightGray.copy(alpha = 0.3f)
+                        )
+                    }
+                }
+
+                Text(
+                    text = if (autoRebuildDays == 0)
+                        "Disabled — playlist only updates when you tap Build"
+                    else
+                        "Playlist will auto-update in the background every " +
+                        "$autoRebuildDays ${if (autoRebuildDays == 1) "day" else "days"}",
+                    color = SpotifyLightGray.copy(alpha = 0.55f),
+                    fontSize = 12.sp
+                )
+            }
+
             HorizontalDivider(
                 color = SpotifyLightGray.copy(alpha = 0.15f),
                 thickness = 1.dp
             )
+
+            // ── Buy me a drink ───────────────────────────────────────────────
+            Button(
+                onClick = {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://www.buymeacoffee.com/AppsbyDan")
+                        )
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFFFFDD00),
+                    contentColor = androidx.compose.ui.graphics.Color.Black
+                )
+            ) {
+                Text("Buy me a drink 🍺", fontWeight = FontWeight.Bold)
+            }
+
+            // ── Export Artist List ───────────────────────────────────────────
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        val fileName = viewModel.exportArtistList(context)
+                        withContext(Dispatchers.Main) {
+                            if (fileName != null) {
+                                Toast.makeText(context, "Saved to Downloads: $fileName", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "Export failed — load your artist library first", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Export artist list to Downloads",
+                    color = SpotifyLightGray.copy(alpha = 0.7f),
+                    fontSize = 14.sp
+                )
+            }
 
             // ── Reset cooldown memory ────────────────────────────────────────
             TextButton(

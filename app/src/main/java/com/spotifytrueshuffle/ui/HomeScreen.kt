@@ -3,6 +3,7 @@ package com.spotifytrueshuffle.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -25,12 +26,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spotifytrueshuffle.ui.theme.SpotifyGreen
 import com.spotifytrueshuffle.ui.theme.SpotifyLightGray
 import com.spotifytrueshuffle.ui.theme.SpotifyTrueShuffleTheme
+
+private const val BMC_URL = "https://www.buymeacoffee.com/AppsbyDan"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,6 +44,8 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val settingsVisible by viewModel.settingsVisible.collectAsState()
+    val showBirthdayPrompt by viewModel.showBirthdayPrompt.collectAsState()
+    val context = LocalContext.current
 
     SpotifyTrueShuffleTheme {
         Surface(
@@ -80,7 +86,7 @@ fun HomeScreen(
                                 is MainViewModel.UiState.Setup       -> { /* handled above */ }
                                 is MainViewModel.UiState.NotLoggedIn -> NotLoggedInContent(onLoginClick)
                                 is MainViewModel.UiState.LoggedIn    -> LoggedInContent(state, viewModel)
-                                is MainViewModel.UiState.Building    -> BuildingContent(state)
+                                is MainViewModel.UiState.Building    -> BuildingContent(state, viewModel)
                                 is MainViewModel.UiState.Success     -> SuccessContent(state, viewModel)
                                 is MainViewModel.UiState.Error       -> ErrorContent(state, viewModel)
                             }
@@ -110,6 +116,37 @@ fun HomeScreen(
                         SettingsSheet(
                             viewModel = viewModel,
                             onDismiss = { viewModel.closeSettings() }
+                        )
+                    }
+
+                    // ── Birthday prompt ───────────────────────────────────────
+                    if (showBirthdayPrompt) {
+                        AlertDialog(
+                            onDismissRequest = { viewModel.dismissBirthdayPrompt() },
+                            title = { Text("🎂 Happy June 17th!", color = Color.White) },
+                            text = {
+                                Text(
+                                    "If Shuffle All has been useful to you, consider buying " +
+                                    "the developer a drink — it helps keep the app updated!",
+                                    color = SpotifyLightGray
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    viewModel.dismissBirthdayPrompt()
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(BMC_URL))
+                                    )
+                                }) {
+                                    Text("Buy a Drink 🍺", color = SpotifyGreen)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { viewModel.dismissBirthdayPrompt() }) {
+                                    Text("Maybe Later", color = SpotifyLightGray)
+                                }
+                            },
+                            containerColor = MaterialTheme.colorScheme.surface
                         )
                     }
                 }
@@ -228,16 +265,48 @@ private fun LoggedInContent(
 }
 
 @Composable
-private fun BuildingContent(state: MainViewModel.UiState.Building) {
+private fun BuildingContent(
+    state: MainViewModel.UiState.Building,
+    viewModel: MainViewModel
+) {
+    val tick by viewModel.buildingAnimTick.collectAsState()
+    val names = state.animationArtistNames
+    val currentName = if (names.isNotEmpty()) names[tick % names.size] else null
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth()
     ) {
-        CircularProgressIndicator(
-            color = SpotifyGreen,
-            strokeWidth = 3.dp,
-            modifier = Modifier.size(48.dp)
-        )
+        if (currentName != null) {
+            Text(
+                text = "Considering…",
+                color = SpotifyLightGray.copy(alpha = 0.5f),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            AnimatedContent(
+                targetState = currentName,
+                transitionSpec = { fadeIn(tween(70)) togetherWith fadeOut(tween(70)) },
+                label = "artist_reel"
+            ) { name ->
+                Text(
+                    text = name,
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        } else {
+            CircularProgressIndicator(
+                color = SpotifyGreen,
+                strokeWidth = 3.dp,
+                modifier = Modifier.size(48.dp)
+            )
+        }
         Spacer(modifier = Modifier.height(24.dp))
         Text(
             text = state.progress,

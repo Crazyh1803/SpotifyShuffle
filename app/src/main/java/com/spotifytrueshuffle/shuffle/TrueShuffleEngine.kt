@@ -50,9 +50,10 @@ class TrueShuffleEngine {
      * @param cooldownArtistIds  Artist IDs that appeared in the last N playlists. These
      *                           artists are excluded from the normal ordering and appended
      *                           at the end so they only appear if the playlist runs short.
-     * @param cooldownTrackIds   Track IDs that appeared in the last N playlists. Even if
-     *                           a cooldown artist is used as a fallback, their cooldown
-     *                           tracks are de-prioritised in selectTrack.
+     * @param cooldownSongKeys   Song keys (from [TrackUtils.songKey]) that appeared in the
+     *                           last N playlists. Versions of the same song share a key, so
+     *                           "Jane Says" and "Jane Says (Live)" are both suppressed when
+     *                           either has appeared recently.
      * @param discoveryBias      0–100 slider value controlling Tier C weight. Default 60.
      * @param targetDurationMs   Total duration to aim for (default 2 hours)
      * @return Ordered list of tracks for the playlist
@@ -64,7 +65,7 @@ class TrueShuffleEngine {
         discoveryArtistIds: Set<String> = emptySet(),
         likedTrackIds: Set<String> = emptySet(),
         cooldownArtistIds: Set<String> = emptySet(),
-        cooldownTrackIds: Set<String> = emptySet(),
+        cooldownSongKeys: Set<String> = emptySet(),
         discoveryBias: Int = 60,
         targetDurationMs: Long = 2L * 60 * 60 * 1000
     ): List<Track> {
@@ -79,10 +80,14 @@ class TrueShuffleEngine {
         val freshArtists = artistsWithTracks.filter { it.id !in cooldownArtistIds }
         val cooldownFallbackArtists = artistsWithTracks.filter { it.id in cooldownArtistIds }
 
-        // Build the tier-interleaved order for fresh artists, then append cooldown as fallback.
+        // Build the tier-interleaved order for fresh artists, then append cooldown fallbacks.
+        // Fallback artists also go through buildOrderedArtists so the discovery bias and
+        // tier weighting still apply even when most of the library is on cooldown.
         val orderedArtists = buildOrderedArtists(
             freshArtists, topArtistIds, discoveryArtistIds, discoveryBias
-        ) + cooldownFallbackArtists.shuffled()
+        ) + buildOrderedArtists(
+            cooldownFallbackArtists, topArtistIds, discoveryArtistIds, discoveryBias
+        )
 
         // Pick one track per artist, stopping when we reach the target duration
         val playlist = mutableListOf<Track>()
@@ -91,11 +96,18 @@ class TrueShuffleEngine {
         for (artist in orderedArtists) {
             if (totalMs >= targetDurationMs) break
             val tracks = tracksByArtist[artist.id] ?: continue
+            // If every track this artist has is on song cooldown, skip them in the first
+            // pass — they'll be picked up in the second pass only if needed to hit the
+            // target duration. This prevents single-track artists from forcing the same
+            // song into back-to-back playlists.
+            if (tracks.all { t ->
+                    TrackUtils.songKey(t.name, t.artists.firstOrNull()?.id ?: "") in cooldownSongKeys
+                }) continue
             val track = selectTrack(
                 tracks,
                 isRareArtist = artist.id !in topArtistIds,
                 likedTrackIds = likedTrackIds,
-                cooldownTrackIds = cooldownTrackIds
+                cooldownSongKeys = cooldownSongKeys
             )
             playlist.add(track)
             totalMs += track.durationMs
@@ -222,15 +234,17 @@ class TrueShuffleEngine {
         tracks: List<Track>,
         isRareArtist: Boolean,
         likedTrackIds: Set<String> = emptySet(),
-        cooldownTrackIds: Set<String> = emptySet()
+        cooldownSongKeys: Set<String> = emptySet()
     ): Track {
         if (!isRareArtist) return tracks.random()
 
         // Three-level fallback so we always return something.
+        // Cooldown is checked via song key so live/remastered versions count as the same song.
         val pool = tracks
-            .filter { it.id !in cooldownTrackIds && it.id !in likedTrackIds }
-            .ifEmpty  { tracks.filter { it.id !in cooldownTrackIds } }
-            .ifEmpty  { tracks }
+            .filter { t -> TrackUtils.songKey(t.name, t.artists.firstOrNull()?.id ?: "") !in cooldownSongKeys
+                        && t.id !in likedTrackIds }
+            .ifEmpty { tracks.filter { t -> TrackUtils.songKey(t.name, t.artists.firstOrNull()?.id ?: "") !in cooldownSongKeys } }
+            .ifEmpty { tracks }
 
         if (pool.size == 1) return pool[0]
 

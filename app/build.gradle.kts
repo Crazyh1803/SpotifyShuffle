@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.spotifytrueshuffle"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.spotifytrueshuffle"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -76,6 +76,12 @@ dependencies {
 
     // Encrypted SharedPreferences (for token storage)
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // WorkManager — background periodic playlist rebuilds
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    // NotificationCompat — post notification after background rebuild
+    implementation("androidx.core:core-ktx:1.12.0")   // already pulled in, ensures NotificationCompat
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

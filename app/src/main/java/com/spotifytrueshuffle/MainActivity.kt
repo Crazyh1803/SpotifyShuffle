@@ -5,22 +5,18 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.ViewModelProvider
-import com.spotifytrueshuffle.api.AuthInterceptor
-import com.spotifytrueshuffle.api.SpotifyApiService
 import com.spotifytrueshuffle.api.SpotifyRepository
 import com.spotifytrueshuffle.auth.SpotifyAuthManager
 import com.spotifytrueshuffle.auth.TokenStorage
 import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
+import com.spotifytrueshuffle.cache.TrackPoolCache
+import com.spotifytrueshuffle.network.buildApiService
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
 import com.spotifytrueshuffle.ui.HomeScreen
 import com.spotifytrueshuffle.ui.MainViewModel
 import com.spotifytrueshuffle.ui.MainViewModelFactory
-import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
 
 /**
  * Single-activity entry point.
@@ -39,18 +35,23 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // ── Dependency wiring ────────────────────────────────────────────────
-        val tokenStorage = TokenStorage(applicationContext)
-        val appSettings = AppSettingsStorage(applicationContext)
-        authManager = SpotifyAuthManager(tokenStorage) { appSettings.load().clientId }
-        val apiService = buildApiService(tokenStorage)
-        val repository = SpotifyRepository(apiService, authManager, tokenStorage)
+        val tokenStorage  = TokenStorage(applicationContext)
+        val appSettings   = AppSettingsStorage(applicationContext)
+        authManager       = SpotifyAuthManager(tokenStorage) { appSettings.load().clientId }
+        val apiService    = buildApiService(tokenStorage)     // from network.ApiServiceFactory
+        val repository    = SpotifyRepository(apiService, authManager, tokenStorage)
         val shuffleEngine = TrueShuffleEngine()
-        val trackCache = ArtistTrackCache(applicationContext)
+        val trackCache     = ArtistTrackCache(applicationContext)
+        val trackPoolCache = TrackPoolCache(applicationContext)
         val historyStorage = ShuffleHistoryStorage(applicationContext)
 
         viewModel = ViewModelProvider(
             this,
-            MainViewModelFactory(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings)
+            MainViewModelFactory(
+                authManager, repository, tokenStorage, shuffleEngine,
+                trackCache, trackPoolCache, historyStorage, appSettings,
+                applicationContext           // ← for WorkManager scheduling
+            )
         )[MainViewModel::class.java]
 
         // ── UI ───────────────────────────────────────────────────────────────
@@ -61,6 +62,8 @@ class MainActivity : ComponentActivity() {
                 onLoginClick = { authManager.launchAuthFlow(this@MainActivity) }
             )
         }
+
+        viewModel.checkBirthdayPrompt()
 
         // Handle the case where the activity is launched directly via the redirect URI
         handleIntent(intent)
@@ -81,7 +84,7 @@ class MainActivity : ComponentActivity() {
 
         // Check it's our redirect URI: com.spotifytrueshuffle://callback
         if (uri.scheme == "com.spotifytrueshuffle" && uri.host == "callback") {
-            val code = uri.getQueryParameter("code")
+            val code  = uri.getQueryParameter("code")
             val error = uri.getQueryParameter("error")
 
             when {
@@ -95,25 +98,5 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    // ── Retrofit / OkHttp setup ──────────────────────────────────────────────
-
-    private fun buildApiService(tokenStorage: TokenStorage): SpotifyApiService {
-        val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
-        }
-
-        val client = OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor(tokenStorage))
-            .addInterceptor(logging)
-            .build()
-
-        return Retrofit.Builder()
-            .baseUrl(SpotifyConfig.API_BASE_URL)
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(SpotifyApiService::class.java)
     }
 }

@@ -20,8 +20,14 @@ private const val SETTINGS_FILE = "app_settings.json"
  */
 data class AppSettings(
     val clientId: String = "",
+    /** 0 = disabled; 1–30 = rebuild playlist every N days via WorkManager. */
+    val autoRebuildDays: Int = 0,
     val discoveryBias: Int = 60,
-    val playlistDurationMs: Long = 2L * 60 * 60 * 1000
+    val playlistDurationMs: Long = 2L * 60 * 60 * 1000,
+    /** How many playlists must pass before the same artist can appear again (1–20). */
+    val artistCooldownPlaylists: Int = 2,
+    /** Calendar year in which the birthday prompt was last shown (0 = never shown). */
+    val lastBirthdayYear: Int = 0
 )
 
 /** Reads and writes [AppSettings] to/from internal app storage via Gson. */
@@ -55,11 +61,23 @@ class AppSettingsStorage(context: Context) {
         save(load().copy(clientId = id))
     }
 
+    fun saveAutoRebuildDays(days: Int) {
+        save(load().copy(autoRebuildDays = days))
+    }
+
     fun saveDiscoveryBias(bias: Int) {
         save(load().copy(discoveryBias = bias))
     }
 
     fun savePlaylistDuration(ms: Long) {
         save(load().copy(playlistDurationMs = ms))
+    }
+
+    fun saveArtistCooldownPlaylists(n: Int) {
+        save(load().copy(artistCooldownPlaylists = n))
+    }
+
+    fun saveLastBirthdayYear(year: Int) {
+        save(load().copy(lastBirthdayYear = year))
     }
 }

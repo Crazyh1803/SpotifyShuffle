@@ -9,8 +9,9 @@ import java.io.File
 private const val TAG = "ShuffleHistory"
 private const val HISTORY_FILE = "shuffle_history.json"
 
-/** Maximum number of past playlists to store on disk (supports cooldown up to this value). */
-private const val MAX_STORED = 10
+/** Maximum number of past playlists to store on disk (supports cooldown up to this value).
+ *  Must be >= the max of track cooldown (10) and artist cooldown (20) slider limits. */
+private const val MAX_STORED = 20
 
 /**
  * A snapshot of one generated playlist: the track IDs and primary artist IDs it contained.
@@ -76,22 +77,28 @@ class ShuffleHistoryStorage(context: Context) {
     }
 
     /**
-     * Returns the track IDs and artist IDs that are on cooldown based on the
+     * Returns the song keys and artist IDs that are on cooldown based on the
      * last [n] stored playlists.
      *
-     * @param n  The user's cooldown setting (from [ShuffleHistory.cooldownPlaylists]).
+     * Song keys are recognised by containing "||" (format: "normalized_title||artistId").
+     * Raw Spotify track IDs stored by older app versions do NOT contain "||" and are
+     * silently discarded so they can't corrupt the song-cooldown comparison.
+     *
+     * @param n  The cooldown window (number of past playlists to look back).
      * @param history  Pre-loaded history (avoids re-reading disk when caller already has it).
-     * @return  Pair of (cooldownTrackIds, cooldownArtistIds)
+     * @return  Pair of (cooldownSongKeys, cooldownArtistIds)
      */
     fun getCooldownSets(
         n: Int,
         history: ShuffleHistory = load()
     ): Pair<Set<String>, Set<String>> {
         val recents = history.recentPlaylists.take(n)
-        val trackIds = recents.flatMap { it.trackIds }.toSet()
+        // Only keep entries that are song keys (contain "||"). Raw track IDs from
+        // older versions don't match and would silently disable song deduplication.
+        val songKeys  = recents.flatMap { it.trackIds }.filter { "||" in it }.toSet()
         val artistIds = recents.flatMap { it.artistIds }.toSet()
-        Log.d(TAG, "Cooldown sets (last $n playlists): ${trackIds.size} tracks, ${artistIds.size} artists")
-        return trackIds to artistIds
+        Log.d(TAG, "Cooldown sets (last $n playlists): ${songKeys.size} song keys, ${artistIds.size} artists")
+        return songKeys to artistIds
     }
 
     /**

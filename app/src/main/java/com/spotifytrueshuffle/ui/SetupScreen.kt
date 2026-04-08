@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -44,6 +45,7 @@ fun SetupScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val clipboardManager = LocalClipboardManager.current
     val focusManager = LocalFocusManager.current
+    val uriHandler = LocalUriHandler.current
 
     fun validate(): Boolean {
         val trimmed = clientId.trim()
@@ -92,7 +94,22 @@ fun SetupScreen(
             lineHeight = 22.sp
         )
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(16.dp))
+
+        // ── Developer Dashboard link ─────────────────────────────────────────
+
+        TextButton(
+            onClick = { uriHandler.openUri("https://developer.spotify.com/dashboard") },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "Open Spotify Developer Dashboard ↗",
+                color = SpotifyGreen,
+                fontSize = 14.sp
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
 
         // ── Step-by-step guide button ────────────────────────────────────────
 
