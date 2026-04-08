@@ -1,5 +1,10 @@
 package com.spotifytrueshuffle.ui
 
+import android.content.ContentValues
+import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -12,18 +17,30 @@ import com.spotifytrueshuffle.auth.TokenStorage
 import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
+import com.spotifytrueshuffle.cache.GapArtistCache
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private const val TAG = "MainViewModel"
+
+/**
+ * Tracks incremental gap-artist scan progress across builds.
+ * [isComplete] is true once all followed artists have been scanned at least once.
+ */
+data class ScanProgress(val scanned: Int, val total: Int) {
+    val isComplete: Boolean get() = scanned >= total
+}
 
 class MainViewModel(
     private val authManager: SpotifyAuthManager,
@@ -32,7 +49,8 @@ class MainViewModel(
     private val shuffleEngine: TrueShuffleEngine,
     private val artistCache: ArtistTrackCache,
     private val historyStorage: ShuffleHistoryStorage,
-    private val appSettings: AppSettingsStorage
+    private val appSettings: AppSettingsStorage,
+    private val gapArtistCache: GapArtistCache
 ) : ViewModel() {
 
     sealed class UiState {
@@ -78,6 +96,14 @@ class MainViewModel(
     /** Whether the Settings bottom sheet is currently visible. */
     private val _settingsVisible = MutableStateFlow(false)
     val settingsVisible: StateFlow<Boolean> = _settingsVisible.asStateFlow()
+
+    /** Incremental scan progress — null until the first build completes. */
+    private val _scanProgress = MutableStateFlow<ScanProgress?>(null)
+    val scanProgress: StateFlow<ScanProgress?> = _scanProgress.asStateFlow()
+
+    /** How often gap-artist tracks are automatically re-scanned (0 = manual only). */
+    private val _trackRescanIntervalDays = MutableStateFlow(appSettings.load().trackRescanIntervalDays)
+    val trackRescanIntervalDays: StateFlow<Int> = _trackRescanIntervalDays.asStateFlow()
 
     init {
         val settings = appSettings.load()
@@ -135,6 +161,65 @@ class MainViewModel(
     fun clearCooldownHistory() {
         historyStorage.clearHistory()
         Log.d(TAG, "Cooldown history cleared by user")
+    }
+
+    /** Updates the auto-rescan interval (0 = manual only, 1–365 = days) and persists it. */
+    fun setTrackRescanIntervalDays(days: Int) {
+        val clamped = days.coerceIn(0, 365)
+        _trackRescanIntervalDays.value = clamped
+        appSettings.saveTrackRescanIntervalDays(clamped)
+    }
+
+    /**
+     * Marks all cached gap-artist entries as needing rescan (sets scannedAtMs=0).
+     * The next [buildPlaylist] call will pick up the first batch of artists to re-fetch.
+     */
+    fun rescanAllTracks() {
+        gapArtistCache.clearTimestamps()
+        _scanProgress.value = null  // Reset progress display so user sees it refresh
+        buildPlaylist()
+    }
+
+    /**
+     * Exports the followed artist list as a CSV file to the device's Downloads folder.
+     * Returns the file name on success, or null if the library is empty or write fails.
+     */
+    suspend fun exportArtistList(context: Context): String? = withContext(Dispatchers.IO) {
+        val names = artistCache.load().followedArtists
+            .map { it.name }
+            .distinct()
+            .sorted()
+        if (names.isEmpty()) return@withContext null
+
+        val date = java.time.LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))
+        val fileName = "shuffle_all_artists_$date.csv"
+        val csv = names.joinToString("\n")
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = context.contentResolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                ) ?: return@withContext null
+                context.contentResolver.openOutputStream(uri)?.use { it.write(csv.toByteArray()) }
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                context.contentResolver.update(uri, values, null, null)
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                dir.mkdirs()
+                File(dir, fileName).writeText(csv)
+            }
+            fileName
+        } catch (e: Exception) {
+            Log.e(TAG, "Artist export failed", e)
+            null
+        }
     }
 
     // ── Auth ─────────────────────────────────────────────────────────────────
@@ -200,18 +285,41 @@ class MainViewModel(
                     return@launch
                 }
 
-                // Step 3 — build track pool (library sources + gap-artist top-tracks)
+                // Step 3 — build track pool (library sources + incremental gap-artist cache)
                 stepName = "buildTrackPool"
                 progress("Scanning your Spotify library for tracks…", 3, 4)
-                val topArtistIds = library.topArtistIds.toSet()   // needed by buildTrackPool (source 4b)
-                val trackPool = repository.buildTrackPool(
-                    followedArtistIds = library.followedArtists.map { it.id },
-                    topArtistIds = topArtistIds
+                val topArtistIds = library.topArtistIds.toSet()
+
+                val cachedEntries = gapArtistCache.load()
+                val rescanIntervalDays = _trackRescanIntervalDays.value
+                val rescanThresholdMs = if (rescanIntervalDays == 0) Long.MAX_VALUE
+                                        else rescanIntervalDays * 86_400_000L
+
+                val buildResult = repository.buildTrackPool(
+                    followedArtists = library.followedArtists,
+                    topArtistIds = topArtistIds,
+                    market = user.country,
+                    cachedEntries = cachedEntries,
+                    rescanThresholdMs = rescanThresholdMs
                 )
+
+                // Persist newly scanned entries (merged with existing cache)
+                if (buildResult.newlyScanned.isNotEmpty()) {
+                    gapArtistCache.save(cachedEntries + buildResult.newlyScanned)
+                }
+
+                // Update scan progress for the success screen
+                _scanProgress.value = ScanProgress(
+                    scanned = buildResult.totalCached + buildResult.newlyScanned.size,
+                    total = buildResult.totalGapArtists
+                )
+
+                val trackPool = buildResult.pool
                 val tracksByArtist = trackPool.tracksByArtist
                 Log.d(TAG, "Track pool covers ${tracksByArtist.size} artists " +
                     "(${trackPool.discoveryArtistIds.size} discovery, " +
-                    "${trackPool.likedTrackIds.size} liked track IDs)")
+                    "${trackPool.likedTrackIds.size} liked track IDs, " +
+                    "${buildResult.newlyScanned.size} newly scanned)")
 
                 if (tracksByArtist.isEmpty()) {
                     _uiState.value = UiState.Error(
@@ -441,9 +549,10 @@ class MainViewModelFactory(
     private val shuffleEngine: TrueShuffleEngine,
     private val trackCache: ArtistTrackCache,
     private val historyStorage: ShuffleHistoryStorage,
-    private val appSettings: AppSettingsStorage
+    private val appSettings: AppSettingsStorage,
+    private val gapArtistCache: GapArtistCache
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings) as T
+        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache) as T
 }

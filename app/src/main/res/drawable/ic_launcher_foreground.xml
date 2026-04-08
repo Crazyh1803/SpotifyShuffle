@@ -1,11 +1,105 @@
-<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Simple music note in white -->
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+  <group android:scaleX="0.96171427"
+      android:scaleY="0.96171427"
+      android:translateX="9.801143"
+      android:translateY="9.801143">
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M45,30 L45,65 Q45,73 37,73 Q29,73 29,65 Q29,57 37,57 Q41,57 45,59 L45,38 L75,32 L75,55 Q75,63 67,63 Q59,63 59,55 Q59,47 67,47 Q71,47 75,49 L75,32 Z" />
+        android:pathData="M256,256m-90,0a90,90 0,1 1,180 0a90,90 0,1 1,-180 0"
+        android:strokeAlpha="0.35"
+        android:fillAlpha="0.35">
+      <aapt:attr name="android:fillColor">
+        <gradient
+            android:centerX="256"
+            android:centerY="256"
+            android:gradientRadius="90"
+            android:type="radial">
+          <item android:offset="0" android:color="#E5FF8C00"/>
+          <item android:offset="0.6" android:color="#99CC4400"/>
+          <item android:offset="1" android:color="#00FF6B00"/>
+        </gradient>
+      </aapt:attr>
+    </path>
+    <path
+        android:pathData="M108,290C108,290 140,290 160,270C190,238 210,210 256,210C302,210 322,238 352,270C372,290 404,290 404,290"
+        android:strokeLineJoin="round"
+        android:strokeWidth="28"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round">
+      <aapt:attr name="android:strokeColor">
+        <gradient
+            android:startX="108"
+            android:startY="210"
+            android:endX="404"
+            android:endY="290"
+            android:type="linear">
+          <item android:offset="0" android:color="#FFFF6B00"/>
+          <item android:offset="1" android:color="#FFFF9E00"/>
+        </gradient>
+      </aapt:attr>
+    </path>
+    <path
+        android:pathData="M388,268l32,22l-32,22z"
+        android:fillColor="#FF9E00"/>
+    <path
+        android:pathData="M404,222C404,222 372,222 352,242C322,274 302,302 256,302C210,302 190,274 160,242C140,222 108,222 108,222"
+        android:strokeLineJoin="round"
+        android:strokeWidth="28"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round">
+      <aapt:attr name="android:strokeColor">
+        <gradient
+            android:startX="404"
+            android:startY="222"
+            android:endX="108"
+            android:endY="302"
+            android:type="linear">
+          <item android:offset="0" android:color="#FFBF5FFF"/>
+          <item android:offset="1" android:color="#FF7B2FFF"/>
+        </gradient>
+      </aapt:attr>
+    </path>
+    <path
+        android:pathData="M124,200l-32,22l32,22z"
+        android:fillColor="#BF5FFF"/>
+    <path
+        android:pathData="M256,256m-22,0a22,22 0,1 1,44 0a22,22 0,1 1,-44 0"
+        android:strokeAlpha="0.95"
+        android:fillColor="#ffffff"
+        android:fillAlpha="0.95"/>
+    <path
+        android:pathData="M256,256m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0"
+        android:fillColor="#FFD580"/>
+    <path
+        android:pathData="M256,218l3,10l-3,-4l-3,4z"
+        android:strokeAlpha="0.85"
+        android:fillColor="#ffffff"
+        android:fillAlpha="0.85"/>
+    <path
+        android:pathData="M294,256l-10,3l4,-3l-4,-3z"
+        android:strokeAlpha="0.85"
+        android:fillColor="#ffffff"
+        android:fillAlpha="0.85"/>
+    <path
+        android:pathData="M256,294l-3,-10l3,4l3,-4z"
+        android:strokeAlpha="0.85"
+        android:fillColor="#ffffff"
+        android:fillAlpha="0.85"/>
+    <path
+        android:pathData="M218,256l10,-3l-4,3l4,3z"
+        android:strokeAlpha="0.85"
+        android:fillColor="#ffffff"
+        android:fillAlpha="0.85"/>
+    <path
+        android:pathData="M238,256C238,244 248,238 256,244C264,250 274,244 274,256C274,268 264,274 256,268C248,262 238,268 238,256Z"
+        android:strokeAlpha="0.5"
+        android:strokeWidth="3"
+        android:fillColor="#00000000"
+        android:strokeColor="#ffffff"
+        android:fillAlpha="0.5"/>
+  </group>
 </vector>

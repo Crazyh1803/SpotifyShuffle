@@ -269,6 +269,7 @@ private fun SuccessContent(
     viewModel: MainViewModel
 ) {
     val context = LocalContext.current
+    val scanProgress by viewModel.scanProgress.collectAsState()
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(
@@ -301,6 +302,19 @@ private fun SuccessContent(
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
             )
+        }
+
+        // ── Incremental scan progress ────────────────────────────────────────
+        scanProgress?.let { progress ->
+            if (!progress.isComplete) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Library: ${progress.scanned}/${progress.total} artists scanned · Build again for more",
+                    color = SpotifyGreen.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(32.dp))

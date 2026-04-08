@@ -3,9 +3,19 @@ package com.spotifytrueshuffle.api
 import android.util.Log
 import com.spotifytrueshuffle.auth.SpotifyAuthManager
 import com.spotifytrueshuffle.auth.TokenStorage
+import com.spotifytrueshuffle.cache.GapArtistEntry
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "SpotifyRepository"
+
+/** Maximum gap artists to scan per build. Keeps each run well under 1 minute. */
+private const val BATCH_SIZE = 100
 
 /**
  * Carries an HTTP error code, the response body, and selected response headers
@@ -40,6 +50,21 @@ data class TrackPool(
     val tracksByArtist: Map<String, List<Track>>,
     val discoveryArtistIds: Set<String>,
     val likedTrackIds: Set<String>
+)
+
+/**
+ * Return type for [SpotifyRepository.buildTrackPool] in incremental-cache mode.
+ *
+ * @param pool            The full track pool ready for the shuffle engine.
+ * @param newlyScanned    Entries fetched during this build (caller merges + saves to disk).
+ * @param totalGapArtists Total number of gap artists (covered by cache + newly scanned + skipped).
+ * @param totalCached     Gap artists already in the cache before this build started.
+ */
+data class TrackPoolBuildResult(
+    val pool: TrackPool,
+    val newlyScanned: Map<String, GapArtistEntry>,
+    val totalGapArtists: Int,
+    val totalCached: Int
 )
 
 /**
@@ -121,16 +146,52 @@ class SpotifyRepository(
      *                          source 4b to decide which non-top artists to supplement
      *                          with fresh top-tracks. Pass empty to skip source 4b.
      */
+    /**
+     * Builds the full track pool from four sources with incremental gap-artist caching.
+     *
+     *   1. User's top tracks (3 time ranges) — always re-fetched
+     *   2. Liked songs — fully paginated, always re-fetched
+     *   3. Saved albums — fully paginated, always re-fetched
+     *   4. Gap fill — followed artists with zero coverage after 1-3:
+     *        a. Load cached entries instantly (no API calls) → adds their tracks to the pool
+     *        b. Scan up to [batchSize] unscanned/stale artists → results returned for caller to cache
+     *
+     *    Gap artists split into two groups to preserve correct tier semantics:
+     *      • Top-gap     : in topArtistIds, no saved music → tracks added, stay Tier A only
+     *      • Discovery   : not a top artist, no saved music → tracks added, marked Tier C
+     *
+     *    Uses /artists/{id}/top-tracks first; falls back to /search on 403.
+     *    Skips on 429 immediately — skipped artists remain unscanned and picked up next build.
+     *
+     * @param cachedEntries       Per-artist cache loaded by caller before invocation.
+     * @param batchSize           Max new artists to scan this build (default [BATCH_SIZE]).
+     * @param rescanThresholdMs   Entries older than this (ms) are treated as stale and re-scanned
+     *                            after all completely-unscanned artists. Long.MAX_VALUE = manual only.
+     */
     suspend fun buildTrackPool(
-        followedArtistIds: List<String> = emptyList(),
-        topArtistIds: Set<String> = emptySet()
-    ): TrackPool {
+        followedArtists: List<Artist> = emptyList(),
+        topArtistIds: Set<String> = emptySet(),
+        market: String? = null,
+        cachedEntries: Map<String, GapArtistEntry> = emptyMap(),
+        batchSize: Int = BATCH_SIZE,
+        rescanThresholdMs: Long = Long.MAX_VALUE
+    ): TrackPoolBuildResult {
         ensureValidToken()
+        val followedArtistIds = followedArtists.map { it.id }
+        val artistNameById = followedArtists.associate { it.id to it.name }
+
         val trackMap = mutableMapOf<String, MutableList<Track>>()
         val likedTrackIds = mutableSetOf<String>()
 
+        // Buckets a track under its primary artist (sources 1-3).
         fun addTrack(track: Track) {
-            val artistId = track.artists.firstOrNull()?.id ?: return
+            val id = track.artists.firstOrNull()?.id ?: return
+            trackMap.getOrPut(id) { mutableListOf() }.add(track)
+        }
+
+        // Buckets a track under a specific artist ID regardless of track.artists ordering.
+        // Used in gap fill so search results land under the artist we searched for.
+        fun addTrackForArtist(track: Track, artistId: String) {
             trackMap.getOrPut(artistId) { mutableListOf() }.add(track)
         }
 
@@ -142,124 +203,202 @@ class SpotifyRepository(
                 Log.w(TAG, "getTopTracks($range) failed: ${e.code()}")
             }
         }
+        Log.d(TAG, "After top tracks: ${trackMap.size} artists in pool")
 
-        // 2. Saved ("liked") tracks — paginated, cap at 500.
-        //    Track IDs collected here go into likedTrackIds so the shuffle engine
-        //    can de-prioritise them for non-top artists in favour of fresh tracks.
-        var offset = 0
-        while (offset < 500) {
+        // 2. Liked songs — fully paginated (no cap).
+        var likedOffset = 0
+        while (true) {
             try {
-                val page = api.getSavedTracks(limit = 50, offset = offset)
+                val page = api.getSavedTracks(limit = 50, offset = likedOffset)
                 page.items.forEach {
                     addTrack(it.track)
                     likedTrackIds.add(it.track.id)
                 }
-                offset += page.items.size
+                likedOffset += page.items.size
                 if (page.next == null || page.items.isEmpty()) break
             } catch (e: retrofit2.HttpException) {
-                Log.w(TAG, "getSavedTracks(offset=$offset) failed: ${e.code()}")
+                Log.w(TAG, "getSavedTracks(offset=$likedOffset) failed: ${e.code()}")
                 break
             }
         }
+        Log.d(TAG, "After liked songs ($likedOffset tracks): ${trackMap.size} artists in pool")
 
-        // 3. Saved ("liked") albums — fetch first 50 albums, each includes its track listing.
-        //    Albums often cover followed artists who have no individually liked songs, which is
-        //    exactly the gap we need to fill so the shuffle can reach more of the artist library.
-        //    SimplifiedTrack has no popularity field, so we default to 0 (treated as a deep cut
-        //    by the shuffle engine — a reasonable default for less-explored music).
+        // 3. Saved albums — fully paginated.
         try {
-            val albumPage = api.getSavedAlbums(limit = 50, offset = 0)
+            var albumOffset = 0
             var albumTrackCount = 0
-            for (savedAlbum in albumPage.items) {
-                val alb = savedAlbum.album
-                val albumSimple = AlbumSimple(
-                    id = alb.id, name = alb.name,
-                    releaseDate = alb.releaseDate, images = alb.images
-                )
-                alb.tracks.items
-                    .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
-                    .forEach { st ->
-                        addTrack(Track(
-                            id = st.id, name = st.name, durationMs = st.durationMs,
-                            popularity = 0, uri = st.uri, artists = st.artists,
-                            album = albumSimple, previewUrl = st.previewUrl
-                        ))
-                        albumTrackCount++
-                    }
+            while (true) {
+                val albumPage = api.getSavedAlbums(limit = 50, offset = albumOffset)
+                for (savedAlbum in albumPage.items) {
+                    val alb = savedAlbum.album
+                    val albumSimple = AlbumSimple(
+                        id = alb.id, name = alb.name,
+                        releaseDate = alb.releaseDate, images = alb.images
+                    )
+                    alb.tracks.items
+                        .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                        .forEach { st ->
+                            addTrack(Track(
+                                id = st.id, name = st.name, durationMs = st.durationMs,
+                                popularity = 0, uri = st.uri, artists = st.artists,
+                                album = albumSimple, previewUrl = st.previewUrl
+                            ))
+                            albumTrackCount++
+                        }
+                }
+                albumOffset += albumPage.items.size
+                if (albumPage.next == null || albumPage.items.isEmpty()) break
             }
-            Log.d(TAG, "Saved albums: $albumTrackCount tracks from ${albumPage.items.size} albums")
+            Log.d(TAG, "After saved albums ($albumTrackCount tracks, $albumOffset albums): ${trackMap.size} artists")
         } catch (e: retrofit2.HttpException) {
             Log.w(TAG, "getSavedAlbums failed: ${e.code()}")
         }
 
-        // 4. Gap artists — followed artists with zero coverage after sources 1-3.
-        //    Attempts GET /artists/{id}/top-tracks for each. This is the only way to
-        //    surface tracks from artists the user follows but has never liked/saved.
-        //    • Bails out after 3 consecutive 403s: Spotify dev-mode still restricts this
-        //      endpoint for many apps; early bail avoids pointless retries.
-        //    • 150 ms between calls keeps us inside Spotify's rate limit.
-        //    • Cap at 50 gap artists to keep load time bounded (~7 s worst case).
-        //    • Artist IDs that successfully get tracks here are returned as discoveryArtistIds
-        //      so the shuffle engine can put them in a dedicated high-priority Tier C.
+        // 4. Gap fill — followed artists with zero coverage after sources 1-3.
+        //
+        //    Step 4a: Load cached entries instantly. For each gap artist already in the cache,
+        //    add their stored tracks to the pool immediately — no API calls needed.
+        //    Step 4b: Identify unscanned (not in cache or scannedAtMs==0) and stale (older than
+        //    rescanThresholdMs) artists. Scan the next batch, prioritising unscanned first.
         val discoveryArtistIds = mutableSetOf<String>()
+        val newlyScanned = mutableMapOf<String, GapArtistEntry>()
+
         if (followedArtistIds.isNotEmpty()) {
-            val gapArtistIds = followedArtistIds
-                .filter { it !in trackMap.keys }
-                .take(50)
-            Log.d(TAG, "Gap artists: ${gapArtistIds.size} of ${followedArtistIds.size} have no pool coverage")
-            var consecutiveForbidden = 0
-            for (artistId in gapArtistIds) {
-                if (consecutiveForbidden >= 3) {
-                    Log.w(TAG, "Stopping gap-artist fetch: 3 consecutive 403s (dev-mode restriction)")
-                    break
-                }
-                try {
-                    delay(150)
-                    val response = api.getArtistTopTracks(artistId = artistId)
-                    response.tracks.forEach { addTrack(it) }
-                    if (response.tracks.isNotEmpty()) discoveryArtistIds.add(artistId)
-                    consecutiveForbidden = 0
-                } catch (e: retrofit2.HttpException) {
-                    if (e.code() == 403) consecutiveForbidden++ else consecutiveForbidden = 0
-                    Log.w(TAG, "getArtistTopTracks($artistId) ${e.code()}")
+            // All gap artists = followed artists not covered by sources 1-3
+            val allGapIds = followedArtistIds.filter { it !in trackMap.keys }
+            val totalGapArtists = allGapIds.size
+
+            // 4a: Load cached entries — instant, no API calls.
+            val nowMs = System.currentTimeMillis()
+            var loadedFromCache = 0
+            for (artistId in allGapIds) {
+                val entry = cachedEntries[artistId]
+                if (entry != null && entry.scannedAtMs > 0L) {
+                    entry.tracks.forEach { addTrackForArtist(it, artistId) }
+                    // Recalculate tier from current topArtistIds (top artist list changes over time)
+                    if (artistId !in topArtistIds && entry.tracks.isNotEmpty()) {
+                        discoveryArtistIds.add(artistId)
+                    }
+                    loadedFromCache++
                 }
             }
-            Log.d(TAG, "Discovery artists (gap-filled): ${discoveryArtistIds.size}")
-        }
+            Log.d(TAG, "Gap fill 4a: $loadedFromCache/${totalGapArtists} loaded from cache instantly")
 
-        // 4b. Supplement Tier-B artists (in pool, not a top artist, not already discovery) with
-        //     their Spotify top-tracks. This gives the shuffle engine non-liked track options for
-        //     "familiar but not top" artists, so selectTrack can serve something fresher than the
-        //     same liked songs. Capped at 40 artists; same 150 ms pacing and 3× 403 bail as above.
-        if (topArtistIds.isNotEmpty()) {
-            val tierBCandidates = followedArtistIds
-                .filter { it in trackMap && it !in topArtistIds && it !in discoveryArtistIds }
-                .take(40)
-            Log.d(TAG, "Tier-B supplement: ${tierBCandidates.size} artists")
-            var tierBConsecutiveForbidden = 0
-            for (artistId in tierBCandidates) {
-                if (tierBConsecutiveForbidden >= 3) {
-                    Log.w(TAG, "Stopping Tier-B supplement: 3 consecutive 403s")
-                    break
+            // 4b: Build the scan batch.
+            // Unscanned: gap artists not in cache at all, or with scannedAtMs == 0
+            val unscannedIds = allGapIds.filter { artistId ->
+                val entry = cachedEntries[artistId]
+                entry == null || entry.scannedAtMs == 0L
+            }.shuffled()
+
+            // Stale: in cache with a real timestamp, but older than rescanThresholdMs
+            val staleIds = allGapIds.filter { artistId ->
+                val entry = cachedEntries[artistId]
+                entry != null && entry.scannedAtMs > 0L && entry.scannedAtMs < nowMs - rescanThresholdMs
+            }.shuffled()
+
+            // Take up to batchSize, unscanned first
+            val toScan = (unscannedIds + staleIds).take(batchSize)
+            Log.d(TAG, "Gap fill 4b: ${unscannedIds.size} unscanned + ${staleIds.size} stale → " +
+                "scanning ${toScan.size} this build")
+
+            if (toScan.isNotEmpty()) {
+                val topTracksBlocked = AtomicBoolean(false)
+                val semaphore = Semaphore(2)   // 2 concurrent — keeps burst rate well under Spotify's limit
+
+                val scanResults: List<List<Track>> = coroutineScope {
+                    toScan.mapIndexed { index, artistId ->
+                        async {
+                            // Stagger launch: spread starts 100ms apart so we don't slam the API
+                            // with 100 requests simultaneously. Effective rate ≈ 2 req/sec.
+                            delay(index * 100L)
+                            semaphore.withPermit {
+                                val found = mutableListOf<Track>()
+
+                                // Try top-tracks unless a 403 has already been seen
+                                if (!topTracksBlocked.get()) {
+                                    try {
+                                        found.addAll(api.getArtistTopTracks(artistId).tracks)
+                                    } catch (e: retrofit2.HttpException) {
+                                        when (e.code()) {
+                                            429  -> return@withPermit found   // skip, no wait
+                                            403  -> topTracksBlocked.set(true)
+                                            else -> Log.w(TAG, "getArtistTopTracks($artistId) ${e.code()}")
+                                        }
+                                    }
+                                }
+
+                                // Search fallback: fires when top-tracks returned nothing or is blocked.
+                                if (found.isEmpty() && market != null) {
+                                    val name = artistNameById[artistId]
+                                    if (name != null) {
+                                        try {
+                                            val results = api.searchTracks(
+                                                query = "artist:\"$name\"",
+                                                market = market,
+                                                limit = 10
+                                            ).tracks.items
+                                            found.addAll(results.filter { track ->
+                                                track.artists.any { it.id == artistId }
+                                            })
+                                        } catch (e: retrofit2.HttpException) {
+                                            Log.w(TAG, "searchTracks($artistId) ${e.code()} — skipping")
+                                        }
+                                    }
+                                }
+                                found
+                            }
+                        }
+                    }.awaitAll()
                 }
-                try {
-                    delay(150)
-                    val response = api.getArtistTopTracks(artistId = artistId)
-                    response.tracks.forEach { addTrack(it) }
-                    tierBConsecutiveForbidden = 0
-                } catch (e: retrofit2.HttpException) {
-                    if (e.code() == 403) tierBConsecutiveForbidden++ else tierBConsecutiveForbidden = 0
-                    Log.w(TAG, "getArtistTopTracks(tierB/$artistId) ${e.code()}")
+
+                // Merge scan results into pool and build newlyScanned map
+                toScan.zip(scanResults).forEach { (artistId, tracks) ->
+                    val isDiscovery = artistId !in topArtistIds
+                    // Store entry even if empty — marks the artist as scanned so we don't retry it
+                    // every build. An empty result just means no accessible tracks right now.
+                    val scannedAtMs = if (tracks.isNotEmpty()) nowMs else 0L  // 0 = retry next build
+                    newlyScanned[artistId] = GapArtistEntry(
+                        tracks = tracks.distinctBy { it.id },
+                        isDiscovery = isDiscovery,
+                        scannedAtMs = scannedAtMs
+                    )
+                    if (tracks.isNotEmpty()) {
+                        tracks.forEach { addTrackForArtist(it, artistId) }
+                        if (isDiscovery) discoveryArtistIds.add(artistId)
+                    }
                 }
             }
+
+            Log.d(TAG, "Gap fill complete: ${newlyScanned.size} newly scanned, " +
+                "${discoveryArtistIds.size} Tier C artists, pool now ${trackMap.size} artists")
+
+            val result = trackMap.mapValues { (_, tracks) -> tracks.distinctBy { it.id } }
+            Log.d(TAG, "Track pool: ${result.values.sumOf { it.size }} tracks for ${result.size} artists")
+            return TrackPoolBuildResult(
+                pool = TrackPool(
+                    tracksByArtist = result,
+                    discoveryArtistIds = discoveryArtistIds,
+                    likedTrackIds = likedTrackIds
+                ),
+                newlyScanned = newlyScanned,
+                totalGapArtists = totalGapArtists,
+                totalCached = loadedFromCache
+            )
         }
 
+        // No followed artists — return pool built from sources 1-3 only
         val result = trackMap.mapValues { (_, tracks) -> tracks.distinctBy { it.id } }
-        Log.d(TAG, "Track pool: ${result.values.sumOf { it.size }} tracks for ${result.size} artists")
-        return TrackPool(
-            tracksByArtist = result,
-            discoveryArtistIds = discoveryArtistIds,
-            likedTrackIds = likedTrackIds
+        Log.d(TAG, "Track pool (no followed artists): ${result.values.sumOf { it.size }} tracks")
+        return TrackPoolBuildResult(
+            pool = TrackPool(
+                tracksByArtist = result,
+                discoveryArtistIds = emptySet(),
+                likedTrackIds = likedTrackIds
+            ),
+            newlyScanned = emptyMap(),
+            totalGapArtists = 0,
+            totalCached = 0
         )
     }
 

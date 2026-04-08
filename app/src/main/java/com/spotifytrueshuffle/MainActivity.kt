@@ -12,6 +12,7 @@ import com.spotifytrueshuffle.auth.SpotifyAuthManager
 import com.spotifytrueshuffle.auth.TokenStorage
 import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistTrackCache
+import com.spotifytrueshuffle.cache.GapArtistCache
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
 import com.spotifytrueshuffle.ui.HomeScreen
@@ -47,10 +48,11 @@ class MainActivity : ComponentActivity() {
         val shuffleEngine = TrueShuffleEngine()
         val trackCache = ArtistTrackCache(applicationContext)
         val historyStorage = ShuffleHistoryStorage(applicationContext)
+        val gapArtistCache = GapArtistCache(applicationContext)
 
         viewModel = ViewModelProvider(
             this,
-            MainViewModelFactory(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings)
+            MainViewModelFactory(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache)
         )[MainViewModel::class.java]
 
         // ── UI ───────────────────────────────────────────────────────────────

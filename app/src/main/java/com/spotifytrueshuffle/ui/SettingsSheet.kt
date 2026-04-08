@@ -1,15 +1,24 @@
 package com.spotifytrueshuffle.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.spotifytrueshuffle.ui.theme.SpotifyGreen
 import com.spotifytrueshuffle.ui.theme.SpotifyLightGray
 
@@ -36,9 +45,12 @@ fun SettingsSheet(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
-    val cooldownCount    by viewModel.cooldownCount.collectAsState()
-    val discoveryBias    by viewModel.discoveryBias.collectAsState()
+    val cooldownCount      by viewModel.cooldownCount.collectAsState()
+    val discoveryBias      by viewModel.discoveryBias.collectAsState()
     val playlistDurationMs by viewModel.playlistDurationMs.collectAsState()
+    val rescanDays         by viewModel.trackRescanIntervalDays.collectAsState()
+    val context            = LocalContext.current
+    val scope              = rememberCoroutineScope()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -141,6 +153,112 @@ fun SettingsSheet(
                         }
                     }
                 }
+            }
+
+            // ── Track Library ────────────────────────────────────────────────
+            SettingSection(title = "Track library") {
+                // Auto-rescan interval stepper
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Auto-rescan",
+                        color = SpotifyLightGray,
+                        fontSize = 14.sp
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IconButton(
+                            onClick = { viewModel.setTrackRescanIntervalDays(rescanDays - 1) },
+                            enabled = rescanDays > 0
+                        ) {
+                            Text(
+                                "−",
+                                fontSize = 20.sp,
+                                color = if (rescanDays > 0) SpotifyGreen else SpotifyLightGray.copy(alpha = 0.3f)
+                            )
+                        }
+                        Text(
+                            text = if (rescanDays == 0) "Manual" else "Every $rescanDays ${if (rescanDays == 1) "day" else "days"}",
+                            color = SpotifyGreen,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.widthIn(min = 96.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        IconButton(
+                            onClick = { viewModel.setTrackRescanIntervalDays(rescanDays + 1) },
+                            enabled = rescanDays < 365
+                        ) {
+                            Text(
+                                "+",
+                                fontSize = 20.sp,
+                                color = if (rescanDays < 365) SpotifyGreen else SpotifyLightGray.copy(alpha = 0.3f)
+                            )
+                        }
+                    }
+                }
+
+                // Scan for new tracks button
+                TextButton(
+                    onClick = {
+                        viewModel.rescanAllTracks()
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "Scan for new tracks",
+                        color = SpotifyGreen.copy(alpha = 0.85f),
+                        fontSize = 14.sp
+                    )
+                }
+            }
+
+            // ── Buy me a drink ───────────────────────────────────────────────
+            Button(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://www.buymeacoffee.com/AppsbyDan"))
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFFFFDD00),
+                    contentColor = androidx.compose.ui.graphics.Color.Black
+                )
+            ) {
+                Text("Buy me a drink \uD83C\uDF7A", fontWeight = FontWeight.Bold)
+            }
+
+            // ── Export Artist List ───────────────────────────────────────────
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        val fileName = viewModel.exportArtistList(context)
+                        withContext(Dispatchers.Main) {
+                            if (fileName != null) {
+                                Toast.makeText(context, "Saved to Downloads: $fileName", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "Export failed — load your artist library first", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Export artist list to Downloads",
+                    color = SpotifyLightGray.copy(alpha = 0.7f),
+                    fontSize = 14.sp
+                )
             }
 
             HorizontalDivider(
