@@ -29,7 +29,11 @@ data class AppSettings(
     val playlistDurationMs: Long = 2L * 60 * 60 * 1000,
     /** How many playlists must pass before the same artist can appear again (1–20). */
     val artistCooldownPlaylists: Int = 2,
-    val trackRescanIntervalDays: Int = 30
+    val trackRescanIntervalDays: Int = 30,
+    /** Last known scan progress — persisted so the status survives app restarts.
+     *  -1 means no build has completed yet. */
+    val lastScanScanned: Int = -1,
+    val lastScanTotal: Int = -1
 )
 
 /** Reads and writes [AppSettings] to/from internal app storage via Gson. */
@@ -81,5 +85,9 @@ class AppSettingsStorage(context: Context) {
 
     fun saveTrackRescanIntervalDays(days: Int) {
         save(load().copy(trackRescanIntervalDays = days))
+    }
+
+    fun saveLastScanProgress(scanned: Int, total: Int) {
+        save(load().copy(lastScanScanned = scanned, lastScanTotal = total))
     }
 }

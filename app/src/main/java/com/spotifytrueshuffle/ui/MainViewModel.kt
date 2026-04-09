@@ -131,6 +131,10 @@ class MainViewModel(
         }
         // Re-register periodic work after app updates or device reboots
         if (settings.autoRebuildDays > 0) scheduleOrCancelRebuild(settings.autoRebuildDays)
+        // Restore last known scan progress so the status shows before the first build
+        if (settings.lastScanScanned >= 0 && settings.lastScanTotal > 0) {
+            _scanProgress.value = ScanProgress(settings.lastScanScanned, settings.lastScanTotal)
+        }
     }
 
     // ── Settings ──────────────────────────────────────────────────────────────
@@ -228,6 +232,7 @@ class MainViewModel(
     fun rescanAllTracks() {
         gapArtistCache.clearTimestamps()
         _scanProgress.value = null  // Reset progress display so user sees it refresh
+        appSettings.saveLastScanProgress(-1, -1)
         buildPlaylist()
     }
 
@@ -385,6 +390,7 @@ class MainViewModel(
         historyStorage.clearHistory()
         WorkManager.getInstance(appContext).cancelUniqueWork(WORK_TAG)
         _scanProgress.value = null
+        appSettings.saveLastScanProgress(-1, -1)
         _uiState.value = UiState.NotLoggedIn
         Log.d(TAG, "Logged out — all account data cleared")
     }
@@ -466,10 +472,13 @@ class MainViewModel(
                 // incrementally, so total = all followed artists, scanned = covered + gap-scanned.
                 val followedTotal    = library.followedArtists.size
                 val coveredBySources = followedTotal - buildResult.totalGapArtists
-                _scanProgress.value = ScanProgress(
+                val newProgress = ScanProgress(
                     scanned = coveredBySources + buildResult.totalCached + buildResult.newlyScanned.size,
                     total   = followedTotal
                 )
+                _scanProgress.value = newProgress
+                // Persist so progress survives app restarts
+                appSettings.saveLastScanProgress(newProgress.scanned, newProgress.total)
 
                 val trackPool = buildResult.pool
                 val tracksByArtist = trackPool.tracksByArtist

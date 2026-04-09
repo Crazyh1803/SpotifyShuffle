@@ -162,6 +162,8 @@ private fun LoggedInContent(
     state: MainViewModel.UiState.LoggedIn,
     viewModel: MainViewModel
 ) {
+    val scanProgress by viewModel.scanProgress.collectAsState()
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (state.cachedArtistCount > 0) {
             // ── Library status badge ────────────────────────────────────────
@@ -185,6 +187,26 @@ private fun LoggedInContent(
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
             )
+            // Scan progress summary — shows last known status from any previous build
+            scanProgress?.let { progress ->
+                val remaining = progress.total - progress.scanned
+                Spacer(modifier = Modifier.height(4.dp))
+                if (remaining > 0) {
+                    Text(
+                        text = "$remaining of ${progress.total} artists not yet scanned",
+                        color = SpotifyGreen.copy(alpha = 0.6f),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    Text(
+                        text = "All ${progress.total} artists scanned ✓",
+                        color = SpotifyGreen.copy(alpha = 0.45f),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(28.dp))
 
             SpotifyButton(
@@ -307,11 +329,18 @@ private fun SuccessContent(
         // ── Incremental scan progress ────────────────────────────────────────
         scanProgress?.let { progress ->
             val remaining = progress.total - progress.scanned
+            Spacer(modifier = Modifier.height(6.dp))
             if (remaining > 0) {
-                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = "$remaining of ${progress.total} artists not yet scanned · Tap Build to continue",
                     color = SpotifyGreen.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                Text(
+                    text = "All ${progress.total} artists scanned ✓",
+                    color = SpotifyGreen.copy(alpha = 0.55f),
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center
                 )
