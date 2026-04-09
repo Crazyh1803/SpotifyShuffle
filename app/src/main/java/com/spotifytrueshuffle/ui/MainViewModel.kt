@@ -9,6 +9,12 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import com.spotifytrueshuffle.background.PlaylistRebuildWorker
 import com.spotifytrueshuffle.api.Artist
 import com.spotifytrueshuffle.api.SpotifyRepository
 import com.spotifytrueshuffle.api.Track
@@ -27,12 +33,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-private const val TAG = "MainViewModel"
+private const val TAG      = "MainViewModel"
+private const val WORK_TAG = "auto_rebuild"
 
 /**
  * Tracks incremental gap-artist scan progress across builds.
@@ -50,7 +58,8 @@ class MainViewModel(
     private val artistCache: ArtistTrackCache,
     private val historyStorage: ShuffleHistoryStorage,
     private val appSettings: AppSettingsStorage,
-    private val gapArtistCache: GapArtistCache
+    private val gapArtistCache: GapArtistCache,
+    private val appContext: Context
 ) : ViewModel() {
 
     sealed class UiState {
@@ -105,6 +114,14 @@ class MainViewModel(
     private val _trackRescanIntervalDays = MutableStateFlow(appSettings.load().trackRescanIntervalDays)
     val trackRescanIntervalDays: StateFlow<Int> = _trackRescanIntervalDays.asStateFlow()
 
+    /** 0 = disabled; 1–30 = auto-rebuild playlist every N days. */
+    private val _autoRebuildDays = MutableStateFlow(appSettings.load().autoRebuildDays)
+    val autoRebuildDays: StateFlow<Int> = _autoRebuildDays.asStateFlow()
+
+    /** How many playlists must pass before the same artist can appear again (1–20). */
+    private val _artistCooldownPlaylists = MutableStateFlow(appSettings.load().artistCooldownPlaylists)
+    val artistCooldownPlaylists: StateFlow<Int> = _artistCooldownPlaylists.asStateFlow()
+
     init {
         val settings = appSettings.load()
         _uiState.value = when {
@@ -112,6 +129,8 @@ class MainViewModel(
             authManager.isLoggedIn()    -> loggedInState()
             else                        -> UiState.NotLoggedIn
         }
+        // Re-register periodic work after app updates or device reboots
+        if (settings.autoRebuildDays > 0) scheduleOrCancelRebuild(settings.autoRebuildDays)
     }
 
     // ── Settings ──────────────────────────────────────────────────────────────
@@ -168,6 +187,38 @@ class MainViewModel(
         val clamped = days.coerceIn(0, 365)
         _trackRescanIntervalDays.value = clamped
         appSettings.saveTrackRescanIntervalDays(clamped)
+    }
+
+    /** Updates the artist repeat cooldown (1–20 playlists) and persists it. */
+    fun setArtistCooldownPlaylists(n: Int) {
+        val clamped = n.coerceIn(1, 20)
+        _artistCooldownPlaylists.value = clamped
+        appSettings.saveArtistCooldownPlaylists(clamped)
+    }
+
+    /**
+     * Updates the auto-rebuild interval and reschedules (or cancels) the WorkManager job.
+     * @param days 0 = disabled, 1–30 = rebuild every N days.
+     */
+    fun setAutoRebuildDays(days: Int) {
+        val clamped = days.coerceIn(0, 30)
+        _autoRebuildDays.value = clamped
+        appSettings.saveAutoRebuildDays(clamped)
+        scheduleOrCancelRebuild(clamped)
+    }
+
+    private fun scheduleOrCancelRebuild(days: Int) {
+        val wm = WorkManager.getInstance(appContext)
+        if (days == 0) {
+            wm.cancelUniqueWork(WORK_TAG)
+            Log.d(TAG, "Auto-rebuild cancelled")
+        } else {
+            val request = PeriodicWorkRequestBuilder<PlaylistRebuildWorker>(days.toLong(), TimeUnit.DAYS)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build()
+            wm.enqueueUniquePeriodicWork(WORK_TAG, ExistingPeriodicWorkPolicy.REPLACE, request)
+            Log.d(TAG, "Auto-rebuild scheduled every $days day(s)")
+        }
     }
 
     /**
@@ -232,9 +283,22 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Logs out the current Spotify account and clears all account-specific data so a
+     * different account can log in with a clean slate.
+     *
+     * Clears: OAuth tokens + playlist ID, artist library, gap-artist track cache,
+     * shuffle history. Settings (discovery bias, duration, etc.) are kept.
+     */
     fun logout() {
         tokenStorage.clearAll()
+        artistCache.clear()
+        gapArtistCache.clear()
+        historyStorage.clearHistory()
+        WorkManager.getInstance(appContext).cancelUniqueWork(WORK_TAG)
+        _scanProgress.value = null
         _uiState.value = UiState.NotLoggedIn
+        Log.d(TAG, "Logged out — all account data cleared")
     }
 
     fun dismissError() {
@@ -550,9 +614,10 @@ class MainViewModelFactory(
     private val trackCache: ArtistTrackCache,
     private val historyStorage: ShuffleHistoryStorage,
     private val appSettings: AppSettingsStorage,
-    private val gapArtistCache: GapArtistCache
+    private val gapArtistCache: GapArtistCache,
+    private val appContext: Context
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache) as T
+        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache, appContext) as T
 }

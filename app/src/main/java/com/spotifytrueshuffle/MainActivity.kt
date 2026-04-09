@@ -5,8 +5,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.ViewModelProvider
-import com.spotifytrueshuffle.api.AuthInterceptor
-import com.spotifytrueshuffle.api.SpotifyApiService
 import com.spotifytrueshuffle.api.SpotifyRepository
 import com.spotifytrueshuffle.auth.SpotifyAuthManager
 import com.spotifytrueshuffle.auth.TokenStorage
@@ -14,14 +12,11 @@ import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.cache.GapArtistCache
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
+import com.spotifytrueshuffle.network.buildApiService
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
 import com.spotifytrueshuffle.ui.HomeScreen
 import com.spotifytrueshuffle.ui.MainViewModel
 import com.spotifytrueshuffle.ui.MainViewModelFactory
-import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
 
 /**
  * Single-activity entry point.
@@ -40,31 +35,32 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // ── Dependency wiring ────────────────────────────────────────────────
-        val tokenStorage = TokenStorage(applicationContext)
-        val appSettings = AppSettingsStorage(applicationContext)
-        authManager = SpotifyAuthManager(tokenStorage) { appSettings.load().clientId }
-        val apiService = buildApiService(tokenStorage)
-        val repository = SpotifyRepository(apiService, authManager, tokenStorage)
-        val shuffleEngine = TrueShuffleEngine()
-        val trackCache = ArtistTrackCache(applicationContext)
+        val tokenStorage   = TokenStorage(applicationContext)
+        val appSettings    = AppSettingsStorage(applicationContext)
+        authManager        = SpotifyAuthManager(tokenStorage) { appSettings.load().clientId }
+        val repository     = SpotifyRepository(buildApiService(tokenStorage), authManager, tokenStorage)
+        val shuffleEngine  = TrueShuffleEngine()
+        val trackCache     = ArtistTrackCache(applicationContext)
         val historyStorage = ShuffleHistoryStorage(applicationContext)
         val gapArtistCache = GapArtistCache(applicationContext)
 
         viewModel = ViewModelProvider(
             this,
-            MainViewModelFactory(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache)
+            MainViewModelFactory(
+                authManager, repository, tokenStorage, shuffleEngine,
+                trackCache, historyStorage, appSettings, gapArtistCache,
+                applicationContext
+            )
         )[MainViewModel::class.java]
 
         // ── UI ───────────────────────────────────────────────────────────────
         setContent {
             HomeScreen(
-                viewModel = viewModel,
-                // Pass the Activity as context so Chrome Custom Tabs can launch properly
+                viewModel    = viewModel,
                 onLoginClick = { authManager.launchAuthFlow(this@MainActivity) }
             )
         }
 
-        // Handle the case where the activity is launched directly via the redirect URI
         handleIntent(intent)
     }
 
@@ -80,42 +76,13 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val uri = intent?.data ?: return
-
-        // Check it's our redirect URI: com.spotifytrueshuffle://callback
         if (uri.scheme == "com.spotifytrueshuffle" && uri.host == "callback") {
-            val code = uri.getQueryParameter("code")
+            val code  = uri.getQueryParameter("code")
             val error = uri.getQueryParameter("error")
-
             when {
-                code != null -> {
-                    viewModel.handleAuthCallback(code)
-                    setIntent(Intent())
-                }
-                error != null -> {
-                    // User cancelled or denied — stay on the login screen
-                    setIntent(Intent())
-                }
+                code  != null -> { viewModel.handleAuthCallback(code); setIntent(Intent()) }
+                error != null -> { setIntent(Intent()) }
             }
         }
-    }
-
-    // ── Retrofit / OkHttp setup ──────────────────────────────────────────────
-
-    private fun buildApiService(tokenStorage: TokenStorage): SpotifyApiService {
-        val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
-        }
-
-        val client = OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor(tokenStorage))
-            .addInterceptor(logging)
-            .build()
-
-        return Retrofit.Builder()
-            .baseUrl(SpotifyConfig.API_BASE_URL)
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(SpotifyApiService::class.java)
     }
 }

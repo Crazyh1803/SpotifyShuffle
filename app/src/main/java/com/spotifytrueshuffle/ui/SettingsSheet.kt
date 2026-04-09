@@ -1,9 +1,18 @@
 package com.spotifytrueshuffle.ui
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -45,12 +54,19 @@ fun SettingsSheet(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
-    val cooldownCount      by viewModel.cooldownCount.collectAsState()
-    val discoveryBias      by viewModel.discoveryBias.collectAsState()
-    val playlistDurationMs by viewModel.playlistDurationMs.collectAsState()
-    val rescanDays         by viewModel.trackRescanIntervalDays.collectAsState()
-    val context            = LocalContext.current
-    val scope              = rememberCoroutineScope()
+    val cooldownCount          by viewModel.cooldownCount.collectAsState()
+    val artistCooldownPlaylists by viewModel.artistCooldownPlaylists.collectAsState()
+    val discoveryBias          by viewModel.discoveryBias.collectAsState()
+    val playlistDurationMs     by viewModel.playlistDurationMs.collectAsState()
+    val autoRebuildDays        by viewModel.autoRebuildDays.collectAsState()
+    val rescanDays             by viewModel.trackRescanIntervalDays.collectAsState()
+    val context                = LocalContext.current
+    val scope                  = rememberCoroutineScope()
+
+    // Request POST_NOTIFICATIONS permission when auto-rebuild is first enabled (Android 13+)
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* granted or denied — WorkManager runs regardless; notification just won't show if denied */ }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -60,6 +76,7 @@ fun SettingsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 40.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
@@ -98,6 +115,36 @@ fun SettingsSheet(
                 ) {
                     Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                     Text("10", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                }
+            }
+
+            // ── Artist Repeat Cooldown ───────────────────────────────────────
+            SettingSection(title = "Artist repeat cooldown") {
+                Text(
+                    text = "$artistCooldownPlaylists ${if (artistCooldownPlaylists == 1) "playlist" else "playlists"}",
+                    color = SpotifyGreen,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Slider(
+                    value = artistCooldownPlaylists.toFloat(),
+                    onValueChange = { viewModel.setArtistCooldownPlaylists(it.toInt()) },
+                    valueRange = 1f..20f,
+                    steps = 18,
+                    colors = SliderDefaults.colors(
+                        thumbColor = SpotifyGreen,
+                        activeTrackColor = SpotifyGreen,
+                        inactiveTrackColor = SpotifyLightGray.copy(alpha = 0.3f),
+                        activeTickColor = Color.Transparent,
+                        inactiveTickColor = Color.Transparent
+                    )
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text("20", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                 }
             }
 
@@ -217,6 +264,59 @@ fun SettingsSheet(
                         fontSize = 14.sp
                     )
                 }
+            }
+
+            // ── Auto-rebuild ─────────────────────────────────────────────────
+            SettingSection(title = "Auto-rebuild") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { viewModel.setAutoRebuildDays(autoRebuildDays - 1) },
+                        enabled = autoRebuildDays > 0
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ChevronLeft,
+                            contentDescription = "Decrease interval",
+                            tint = if (autoRebuildDays > 0) SpotifyGreen
+                                   else SpotifyLightGray.copy(alpha = 0.3f)
+                        )
+                    }
+                    Text(
+                        text = if (autoRebuildDays == 0) "Off"
+                               else "Every $autoRebuildDays ${if (autoRebuildDays == 1) "day" else "days"}",
+                        color = if (autoRebuildDays == 0) SpotifyLightGray else SpotifyGreen,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    IconButton(
+                        onClick = {
+                            if (autoRebuildDays == 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            viewModel.setAutoRebuildDays(autoRebuildDays + 1)
+                        },
+                        enabled = autoRebuildDays < 30
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Increase interval",
+                            tint = if (autoRebuildDays < 30) SpotifyGreen
+                                   else SpotifyLightGray.copy(alpha = 0.3f)
+                        )
+                    }
+                }
+                Text(
+                    text = if (autoRebuildDays == 0)
+                        "Disabled — playlist only updates when you tap Build"
+                    else
+                        "Playlist will auto-update in the background every " +
+                        "$autoRebuildDays ${if (autoRebuildDays == 1) "day" else "days"}",
+                    color = SpotifyLightGray.copy(alpha = 0.55f),
+                    fontSize = 12.sp
+                )
             }
 
             // ── Buy me a drink ───────────────────────────────────────────────

@@ -71,6 +71,9 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // WorkManager (background playlist auto-rebuild)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
     // Chrome Custom Tabs (for Spotify OAuth)
     implementation("androidx.browser:browser:1.8.0")
 

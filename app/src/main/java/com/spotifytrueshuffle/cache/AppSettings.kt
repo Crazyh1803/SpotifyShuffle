@@ -23,8 +23,12 @@ private const val SETTINGS_FILE = "app_settings.json"
  */
 data class AppSettings(
     val clientId: String = "",
+    /** 0 = disabled; 1–30 = auto-rebuild playlist every N days via WorkManager. */
+    val autoRebuildDays: Int = 0,
     val discoveryBias: Int = 60,
     val playlistDurationMs: Long = 2L * 60 * 60 * 1000,
+    /** How many playlists must pass before the same artist can appear again (1–20). */
+    val artistCooldownPlaylists: Int = 2,
     val trackRescanIntervalDays: Int = 30
 )
 
@@ -65,6 +69,14 @@ class AppSettingsStorage(context: Context) {
 
     fun savePlaylistDuration(ms: Long) {
         save(load().copy(playlistDurationMs = ms))
+    }
+
+    fun saveAutoRebuildDays(days: Int) {
+        save(load().copy(autoRebuildDays = days))
+    }
+
+    fun saveArtistCooldownPlaylists(n: Int) {
+        save(load().copy(artistCooldownPlaylists = n))
     }
 
     fun saveTrackRescanIntervalDays(days: Int) {
