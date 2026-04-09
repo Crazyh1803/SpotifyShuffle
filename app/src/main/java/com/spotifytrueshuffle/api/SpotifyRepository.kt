@@ -355,9 +355,12 @@ class SpotifyRepository(
                 // Merge scan results into pool and build newlyScanned map
                 toScan.zip(scanResults).forEach { (artistId, tracks) ->
                     val isDiscovery = artistId !in topArtistIds
-                    // Store entry even if empty — marks the artist as scanned so we don't retry it
-                    // every build. An empty result just means no accessible tracks right now.
-                    val scannedAtMs = if (tracks.isNotEmpty()) nowMs else 0L  // 0 = retry next build
+                    // Always mark as scanned (nowMs) even when tracks is empty.
+                    // Empty means either no accessible tracks or a 429 skip — either way,
+                    // retrying every single build wastes API calls and freezes the progress
+                    // counter. These artists will be re-tried on the next explicit rescan
+                    // (user taps "Scan for new tracks") or when the auto-rescan interval fires.
+                    val scannedAtMs = nowMs
                     newlyScanned[artistId] = GapArtistEntry(
                         tracks = tracks.distinctBy { it.id },
                         isDiscovery = isDiscovery,

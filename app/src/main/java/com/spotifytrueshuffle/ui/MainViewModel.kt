@@ -273,6 +273,94 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Writes a diagnostics JSON file to Downloads so the user can share it for bug reports.
+     * Includes library stats, cache stats, current settings, and scan progress.
+     * Never includes the Spotify Client ID or OAuth tokens.
+     */
+    suspend fun exportDiagnostics(context: Context): String? = withContext(Dispatchers.IO) {
+        val library      = artistCache.load()
+        val cacheEntries = gapArtistCache.load()
+        val settings     = appSettings.load()
+        val progress     = _scanProgress.value
+        val nowMs        = System.currentTimeMillis()
+        val rescanMs     = if (settings.trackRescanIntervalDays == 0) Long.MAX_VALUE
+                           else settings.trackRescanIntervalDays * 86_400_000L
+
+        val totalGapArtists = (library.followedArtists.size - cacheEntries.size)
+            .coerceAtLeast(0)  // artists with no cache entry at all (never attempted)
+        val scannedCount   = cacheEntries.values.count { it.scannedAtMs > 0L }
+        val emptyCount     = cacheEntries.values.count { it.scannedAtMs > 0L && it.tracks.isEmpty() }
+        val staleCount     = cacheEntries.values.count { it.scannedAtMs > 0L && it.scannedAtMs < nowMs - rescanMs }
+        val unscannedCount = cacheEntries.values.count { it.scannedAtMs == 0L }
+
+        val lines = buildList {
+            add("=== True Shuffle Diagnostics ===")
+            add("Generated : ${java.time.Instant.now()}")
+            add("")
+            add("--- Library ---")
+            add("Followed artists : ${library.followedArtists.size}")
+            add("Top artists      : ${library.topArtistIds.size}")
+            add("Last refreshed   : ${if (library.lastRefreshedMs == 0L) "never" else java.time.Instant.ofEpochMilli(library.lastRefreshedMs)}")
+            add("")
+            add("--- Gap Artist Cache ---")
+            add("Total entries    : ${cacheEntries.size}")
+            add("Never attempted  : $totalGapArtists  (no cache entry yet)")
+            add("Scanned          : $scannedCount")
+            add("  of which empty : $emptyCount  (scanned but no accessible tracks)")
+            add("  of which stale : $staleCount  (older than rescan interval)")
+            add("Unscanned (retry): $unscannedCount  (attempted but result was 0L timestamp)")
+            add("")
+            add("--- Scan Progress ---")
+            if (progress != null) {
+                add("Scanned / Total  : ${progress.scanned} / ${progress.total}")
+                add("Complete         : ${progress.isComplete}")
+            } else {
+                add("No build completed this session yet")
+            }
+            add("")
+            add("--- Settings ---")
+            add("Discovery bias         : ${settings.discoveryBias}%")
+            add("Playlist duration      : ${settings.playlistDurationMs / 60_000} min")
+            add("Artist cooldown        : ${settings.artistCooldownPlaylists} playlists")
+            add("Auto-rebuild           : ${if (settings.autoRebuildDays == 0) "Off" else "Every ${settings.autoRebuildDays} days"}")
+            add("Track rescan interval  : ${if (settings.trackRescanIntervalDays == 0) "Manual" else "Every ${settings.trackRescanIntervalDays} days"}")
+            add("")
+            add("--- Device ---")
+            add("Android SDK      : ${Build.VERSION.SDK_INT}")
+            add("Device           : ${Build.MANUFACTURER} ${Build.MODEL}")
+        }
+        val content  = lines.joinToString("\n")
+        val ts       = java.time.LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+        val fileName = "trueshuffle_diag_$ts.txt"
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = context.contentResolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                ) ?: return@withContext null
+                context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                context.contentResolver.update(uri, values, null, null)
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                dir.mkdirs()
+                File(dir, fileName).writeText(content)
+            }
+            fileName
+        } catch (e: Exception) {
+            Log.e(TAG, "Diagnostics export failed", e)
+            null
+        }
+    }
+
     // ── Auth ─────────────────────────────────────────────────────────────────
 
     fun handleAuthCallback(code: String) {
@@ -372,10 +460,15 @@ class MainViewModel(
                     gapArtistCache.save(cachedEntries + buildResult.newlyScanned)
                 }
 
-                // Update scan progress for the success screen
+                // Update scan progress for the success screen.
+                // Artists covered by sources 1-3 (liked songs / albums / top tracks) are always
+                // "scanned" — no gap-fill API call needed for them. Gap artists are scanned
+                // incrementally, so total = all followed artists, scanned = covered + gap-scanned.
+                val followedTotal    = library.followedArtists.size
+                val coveredBySources = followedTotal - buildResult.totalGapArtists
                 _scanProgress.value = ScanProgress(
-                    scanned = buildResult.totalCached + buildResult.newlyScanned.size,
-                    total = buildResult.totalGapArtists
+                    scanned = coveredBySources + buildResult.totalCached + buildResult.newlyScanned.size,
+                    total   = followedTotal
                 )
 
                 val trackPool = buildResult.pool
