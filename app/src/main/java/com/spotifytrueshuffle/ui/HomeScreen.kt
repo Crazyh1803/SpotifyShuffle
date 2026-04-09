@@ -306,10 +306,11 @@ private fun SuccessContent(
 
         // ── Incremental scan progress ────────────────────────────────────────
         scanProgress?.let { progress ->
-            if (!progress.isComplete) {
+            val remaining = progress.total - progress.scanned
+            if (remaining > 0) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Library: ${progress.scanned}/${progress.total} artists scanned · Build again for more",
+                    text = "$remaining of ${progress.total} artists not yet scanned · Tap Build to continue",
                     color = SpotifyGreen.copy(alpha = 0.7f),
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center

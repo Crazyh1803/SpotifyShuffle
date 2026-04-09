@@ -361,6 +361,29 @@ fun SettingsSheet(
                 )
             }
 
+            // ── Export Diagnostics ───────────────────────────────────────────
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        val fileName = viewModel.exportDiagnostics(context)
+                        withContext(Dispatchers.Main) {
+                            if (fileName != null) {
+                                Toast.makeText(context, "Diagnostics saved to Downloads: $fileName", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "Diagnostics export failed", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Export diagnostics",
+                    color = SpotifyLightGray.copy(alpha = 0.7f),
+                    fontSize = 14.sp
+                )
+            }
+
             HorizontalDivider(
                 color = SpotifyLightGray.copy(alpha = 0.15f),
                 thickness = 1.dp
