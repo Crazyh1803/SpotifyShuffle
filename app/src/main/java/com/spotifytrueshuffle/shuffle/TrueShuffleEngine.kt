@@ -211,12 +211,21 @@ class TrueShuffleEngine {
      *   2. Fresh only         (not in cooldown, but may be liked)      [fallback]
      *   3. All tracks         (everything, including cooldown tracks)  [last resort]
      *
-     * Top artists (isRareArtist = false) skip the liked/cooldown filtering and just
-     * pick uniformly at random — they're already deprioritised by tier ordering.
+     * Pool selection differs by tier:
+     *   Tier B/C (isRareArtist = true)  — prefers non-liked tracks first (surfaces album
+     *       deep cuts the user hasn't explicitly liked), then falls back to all non-cooldown,
+     *       then all tracks.
+     *   Tier A  (isRareArtist = false)  — skips the liked-track filter (top artists are
+     *       expected favourites; filtering out liked tracks would leave very little), but
+     *       still respects cooldown and applies the same depth-cut bias.
      *
-     * For non-top artists the chosen pool is then sorted by ascending popularity and
-     * sampled with an x² distribution so lower-popularity (deep-cut) tracks are
-     * more likely — index 0 (least popular) is most probable.
+     * Both tiers then apply an x² distribution over tracks sorted by ascending popularity
+     * so lower-popularity (deep-cut) songs are more likely than chart hits.
+     *
+     * Edge case: album-sourced tracks all have popularity = 0 (the simplified-track API
+     * response has no popularity field). When all tracks share the same popularity score
+     * the sort order is arbitrary and the x² bias would cluster at the first few entries.
+     * In that case we fall back to uniform random so every track is equally likely.
      */
     private fun selectTrack(
         tracks: List<Track>,
@@ -224,20 +233,33 @@ class TrueShuffleEngine {
         likedTrackIds: Set<String> = emptySet(),
         cooldownTrackIds: Set<String> = emptySet()
     ): Track {
-        if (!isRareArtist) return tracks.random()
-
-        // Three-level fallback so we always return something.
-        val pool = tracks
-            .filter { it.id !in cooldownTrackIds && it.id !in likedTrackIds }
-            .ifEmpty  { tracks.filter { it.id !in cooldownTrackIds } }
-            .ifEmpty  { tracks }
+        // Build candidate pool based on tier.
+        val pool = if (isRareArtist) {
+            // Tier B / C: prefer non-liked tracks to surface album deep cuts
+            tracks
+                .filter { it.id !in cooldownTrackIds && it.id !in likedTrackIds }
+                .ifEmpty { tracks.filter { it.id !in cooldownTrackIds } }
+                .ifEmpty { tracks }
+        } else {
+            // Tier A: include liked tracks (all top-artist songs are fair game),
+            // still exclude recent cooldown tracks
+            tracks.filter { it.id !in cooldownTrackIds }
+                .ifEmpty { tracks }
+        }
 
         if (pool.size == 1) return pool[0]
 
         val sorted = pool.sortedBy { it.popularity }
-        // x² biases toward 0; coerce to valid index range
+
+        // If every track has the same popularity (common for album-sourced gap-artist tracks
+        // where the API returns no score and we default to 0), the x² index would skew
+        // heavily toward the first entry. Use uniform random instead.
+        if (sorted.first().popularity == sorted.last().popularity) {
+            return pool.random()
+        }
+
+        // x² biases toward index 0 (least popular = deepest cut).
         val rawIdx = (Random.nextDouble().pow(2.0) * sorted.size).toInt()
-        val idx = rawIdx.coerceIn(0, sorted.size - 1)
-        return sorted[idx]
+        return sorted[rawIdx.coerceIn(0, sorted.size - 1)]
     }
 }

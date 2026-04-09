@@ -55,6 +55,31 @@ interface SpotifyApiService {
     ): ArtistTopTracksResponse
 
     /**
+     * Returns up to [limit] albums/singles for the artist.
+     * [includeGroups] is a comma-separated list: "album", "single", "compilation", "appears_on".
+     * We use "album,single" to get the artist's own releases and avoid third-party compilations.
+     * [market] filters to albums available in that country (important for playback eligibility).
+     */
+    @GET("artists/{id}/albums")
+    suspend fun getArtistAlbums(
+        @Path("id") artistId: String,
+        @Query("include_groups") includeGroups: String = "album,single",
+        @Query("limit") limit: Int = 20,
+        @Query("market") market: String? = null
+    ): PagingObject<ArtistAlbum>
+
+    /**
+     * Returns the track listing for a single album (simplified track objects, no popularity).
+     * Used in gap-fill album-based fetching to get the full track list of a randomly chosen album.
+     */
+    @GET("albums/{id}/tracks")
+    suspend fun getAlbumTracks(
+        @Path("id") albumId: String,
+        @Query("limit") limit: Int = 50,
+        @Query("market") market: String? = null
+    ): PagingObject<SimplifiedTrack>
+
+    /**
      * Full-text search for tracks.
      * Used as a fallback when top-tracks returns 403 (known Spotify dev-mode quirk).
      * Use q="artist:\"<name>\"" to restrict results to tracks by that artist.

@@ -129,6 +129,18 @@ data class AlbumWithTracks(
     val tracks: PagingObject<SimplifiedTrack>
 )
 
+/**
+ * An album returned by GET /artists/{id}/albums.
+ * Lighter than [AlbumWithTracks] — no track listing included (fetched separately).
+ */
+data class ArtistAlbum(
+    val id: String,
+    val name: String,
+    @SerializedName("album_type") val albumType: String,   // "album", "single", "compilation"
+    @SerializedName("release_date") val releaseDate: String?,
+    val images: List<SpotifyImage>?
+)
+
 /** A saved (liked) album from GET /me/albums. Requires user-library-read scope. */
 data class SavedAlbum(
     @SerializedName("added_at") val addedAt: String?,

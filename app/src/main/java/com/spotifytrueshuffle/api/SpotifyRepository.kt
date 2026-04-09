@@ -315,20 +315,81 @@ class SpotifyRepository(
                             semaphore.withPermit {
                                 val found = mutableListOf<Track>()
 
-                                // Try top-tracks unless a 403 has already been seen
-                                if (!topTracksBlocked.get()) {
+                                // ── Strategy 1: album-based (preferred) ─────────────────────
+                                // Picks 2 random albums/singles from the artist's discography
+                                // and fetches their full track lists. This surfaces genuine
+                                // variety — not just the same 10 popularity-ranked hits every time.
+                                // On each rescan cycle different albums are selected, so the
+                                // cache rotates naturally.
+                                if (market != null) {
                                     try {
-                                        found.addAll(api.getArtistTopTracks(artistId).tracks)
+                                        val albumsPage = api.getArtistAlbums(
+                                            artistId = artistId,
+                                            includeGroups = "album,single",
+                                            limit = 20,
+                                            market = market
+                                        )
+                                        if (albumsPage.items.isNotEmpty()) {
+                                            // Shuffle so we pick different albums each rescan
+                                            val selectedAlbums = albumsPage.items.shuffled().take(2)
+                                            for (album in selectedAlbums) {
+                                                try {
+                                                    val tracksPage = api.getAlbumTracks(
+                                                        albumId = album.id,
+                                                        limit = 50,
+                                                        market = market
+                                                    )
+                                                    tracksPage.items
+                                                        .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                                                        .forEach { st ->
+                                                            found.add(Track(
+                                                                id = st.id,
+                                                                name = st.name,
+                                                                durationMs = st.durationMs,
+                                                                popularity = 0, // simplified track — no score
+                                                                uri = st.uri,
+                                                                artists = st.artists,
+                                                                album = AlbumSimple(
+                                                                    id = album.id,
+                                                                    name = album.name,
+                                                                    releaseDate = album.releaseDate,
+                                                                    images = album.images
+                                                                ),
+                                                                previewUrl = st.previewUrl
+                                                            ))
+                                                        }
+                                                } catch (e: retrofit2.HttpException) {
+                                                    Log.w(TAG, "getAlbumTracks(${album.id}) ${e.code()} — skipping album")
+                                                }
+                                            }
+                                        }
                                     } catch (e: retrofit2.HttpException) {
                                         when (e.code()) {
-                                            429  -> return@withPermit found   // skip, no wait
+                                            429  -> return@withPermit found  // rate limit — bail immediately
+                                            else -> Log.w(TAG, "getArtistAlbums($artistId) ${e.code()} — falling back")
+                                        }
+                                    }
+                                }
+
+                                // ── Strategy 2: top-tracks fallback ─────────────────────────
+                                // Fires when album fetch returned nothing (e.g. market unavailable,
+                                // artist has no albums/singles, or API error). Top-tracks are
+                                // popularity-ranked hits, so this is the less-preferred path.
+                                if (found.isEmpty() && !topTracksBlocked.get()) {
+                                    try {
+                                        found.addAll(api.getArtistTopTracks(artistId, market = market).tracks)
+                                    } catch (e: retrofit2.HttpException) {
+                                        when (e.code()) {
+                                            429  -> return@withPermit found
                                             403  -> topTracksBlocked.set(true)
                                             else -> Log.w(TAG, "getArtistTopTracks($artistId) ${e.code()}")
                                         }
                                     }
                                 }
 
-                                // Search fallback: fires when top-tracks returned nothing or is blocked.
+                                // ── Strategy 3: search fallback ─────────────────────────────
+                                // Last resort — fires when top-tracks is blocked (403) and
+                                // album fetch gave nothing.
                                 if (found.isEmpty() && market != null) {
                                     val name = artistNameById[artistId]
                                     if (name != null) {
@@ -346,13 +407,16 @@ class SpotifyRepository(
                                         }
                                     }
                                 }
+
                                 found
                             }
                         }
                     }.awaitAll()
                 }
 
-                // Merge scan results into pool and build newlyScanned map
+                // Merge scan results into pool and build newlyScanned map.
+                // Shuffle + take(40) so we store a randomised sample rather than the first N
+                // tracks from whatever album happened to come back first.
                 toScan.zip(scanResults).forEach { (artistId, tracks) ->
                     val isDiscovery = artistId !in topArtistIds
                     // Always mark as scanned (nowMs) even when tracks is empty.
@@ -361,13 +425,14 @@ class SpotifyRepository(
                     // counter. These artists will be re-tried on the next explicit rescan
                     // (user taps "Scan for new tracks") or when the auto-rescan interval fires.
                     val scannedAtMs = nowMs
+                    val dedupedTracks = tracks.distinctBy { it.id }.shuffled().take(40)
                     newlyScanned[artistId] = GapArtistEntry(
-                        tracks = tracks.distinctBy { it.id },
+                        tracks = dedupedTracks,
                         isDiscovery = isDiscovery,
                         scannedAtMs = scannedAtMs
                     )
-                    if (tracks.isNotEmpty()) {
-                        tracks.forEach { addTrackForArtist(it, artistId) }
+                    if (dedupedTracks.isNotEmpty()) {
+                        dedupedTracks.forEach { addTrackForArtist(it, artistId) }
                         if (isDiscovery) discoveryArtistIds.add(artistId)
                     }
                 }
