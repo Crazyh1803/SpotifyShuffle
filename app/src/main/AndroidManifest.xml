@@ -26,7 +26,7 @@
             </intent-filter>
 
             <!--
-                OAuth redirect URI: com.spotifytrueshuffle://callback
+                OAuth redirect URI: com.appsbydan.trueshuffle://callback
                 Spotify redirects here after the user logs in.
                 Must exactly match what you registered in the Spotify Developer Dashboard.
             -->

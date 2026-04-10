@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spotifytrueshuffle.ui.theme.*
 
-private const val REDIRECT_URI = "com.spotifytrueshuffle://callback"
+private const val REDIRECT_URI = "com.appsbydan.trueshuffle://callback"
 
 /**
  * First-time setup screen shown when no Spotify Developer Client ID has been entered yet.

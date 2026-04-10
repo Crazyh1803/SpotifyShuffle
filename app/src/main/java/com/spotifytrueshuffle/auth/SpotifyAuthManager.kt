@@ -19,7 +19,7 @@ private const val TAG = "SpotifyAuth"
  *
  * Flow:
  * 1. [launchAuthFlow] — opens Spotify login in a Chrome Custom Tab
- * 2. Spotify redirects to com.spotifytrueshuffle://callback?code=...
+ * 2. Spotify redirects to com.appsbydan.trueshuffle://callback?code=...
  * 3. MainActivity receives the intent, calls [handleCallback]
  * 4. [handleCallback] exchanges the code for tokens and stores them
  * 5. [refreshTokenIfNeeded] is called before each API request
