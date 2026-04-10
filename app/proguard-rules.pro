@@ -7,8 +7,14 @@
 -keep class okhttp3.** { *; }
 
 # Gson / data models
+# Keep ALL classes that are serialized/deserialized with Gson — R8 strips and renames
+# fields in release builds which breaks Gson's reflection-based serialization entirely.
 -keep class com.spotifytrueshuffle.api.** { *; }
 -keepclassmembers class com.spotifytrueshuffle.api.** {
+    <fields>;
+}
+-keep class com.spotifytrueshuffle.cache.** { *; }
+-keepclassmembers class com.spotifytrueshuffle.cache.** {
     <fields>;
 }
 
