@@ -49,17 +49,22 @@ class PlaylistRebuildWorker(
         val appSettings  = AppSettingsStorage(applicationContext)
         val settings     = appSettings.load()
 
-        // Skip silently if setup is incomplete
-        if (settings.clientId.isEmpty()) {
+        val tokenStorage = TokenStorage(applicationContext)
+
+        // Resolve the Client ID from TokenStorage first (SharedPreferences — R8-safe),
+        // falling back to the Gson settings file for compatibility with older installs.
+        val clientId = tokenStorage.clientId?.takeIf { it.isNotEmpty() }
+            ?: settings.clientId
+
+        // Skip silently if setup is incomplete or user is not logged in
+        if (clientId.isEmpty()) {
             Log.w(TAG, "No Client ID — skipping"); return Result.success()
         }
-
-        val tokenStorage = TokenStorage(applicationContext)
         if (!tokenStorage.isLoggedIn()) {
             Log.w(TAG, "Not logged in — skipping"); return Result.success()
         }
 
-        val authManager   = SpotifyAuthManager(tokenStorage) { settings.clientId }
+        val authManager   = SpotifyAuthManager(tokenStorage) { clientId }
         val repository    = SpotifyRepository(buildApiService(tokenStorage), authManager, tokenStorage)
         val artistCache   = ArtistTrackCache(applicationContext)
         val gapArtistCache = GapArtistCache(applicationContext)

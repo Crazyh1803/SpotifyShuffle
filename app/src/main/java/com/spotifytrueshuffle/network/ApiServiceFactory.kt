@@ -1,5 +1,6 @@
 package com.spotifytrueshuffle.network
 
+import com.spotifytrueshuffle.BuildConfig
 import com.spotifytrueshuffle.SpotifyConfig
 import com.spotifytrueshuffle.api.AuthInterceptor
 import com.spotifytrueshuffle.api.SpotifyApiService
@@ -15,10 +16,14 @@ import retrofit2.converter.gson.GsonConverterFactory
  * Extracted here so both [com.spotifytrueshuffle.MainActivity] and
  * [com.spotifytrueshuffle.background.PlaylistRebuildWorker] can share the same
  * construction logic without duplicating OkHttp/Retrofit setup.
+ *
+ * Logging is limited to BASIC in release builds — BODY level would expose the
+ * Bearer OAuth token and full API response payloads in Logcat.
  */
 fun buildApiService(tokenStorage: TokenStorage): SpotifyApiService {
     val logging = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
+        level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY
+                else HttpLoggingInterceptor.Level.NONE
     }
     val client = OkHttpClient.Builder()
         .addInterceptor(AuthInterceptor(tokenStorage))

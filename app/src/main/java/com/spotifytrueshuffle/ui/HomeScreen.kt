@@ -97,7 +97,7 @@ fun HomeScreen(
                             onClick = { viewModel.openSettings() },
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(top = 8.dp, end = 8.dp)
+                                .padding(top = 27.dp, end = 8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
