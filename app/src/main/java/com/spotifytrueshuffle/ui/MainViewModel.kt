@@ -231,7 +231,7 @@ class MainViewModel(
             val request = PeriodicWorkRequestBuilder<PlaylistRebuildWorker>(days.toLong(), TimeUnit.DAYS)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .build()
-            wm.enqueueUniquePeriodicWork(WORK_TAG, ExistingPeriodicWorkPolicy.REPLACE, request)
+            wm.enqueueUniquePeriodicWork(WORK_TAG, ExistingPeriodicWorkPolicy.UPDATE, request)
             Log.d(TAG, "Auto-rebuild scheduled every $days day(s)")
         }
     }
@@ -429,10 +429,9 @@ class MainViewModel(
      */
     fun buildPlaylist() {
         viewModelScope.launch {
-            var stepName = "initializing"
+            var stepName = "getUserProfile"
             try {
                 // Step 1 — user profile
-                stepName = "getUserProfile"
                 progress("Getting your Spotify profile…", 1, 4)
                 val user = repository.getUserProfile()
 
