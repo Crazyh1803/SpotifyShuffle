@@ -5,7 +5,7 @@ object SpotifyConfig {
     // Users enter their own Spotify Developer Client ID on first launch.
     // It is stored in AppSettings and injected into SpotifyAuthManager as a lambda.
 
-    const val REDIRECT_URI = "com.spotifytrueshuffle://callback"
+    const val REDIRECT_URI = "com.appsbydan.trueshuffle://callback"
     const val AUTH_URL = "https://accounts.spotify.com/authorize"
     const val TOKEN_URL = "https://accounts.spotify.com/api/token"
     const val API_BASE_URL = "https://api.spotify.com/v1/"
