@@ -1,0 +1,45 @@
+# Privacy Policy — Shuffle All
+
+**Effective Date:** April 9, 2026
+
+Shuffle All ("the App") is a free Android application that generates randomized playlists from your Spotify library. This Privacy Policy explains how your information is handled.
+
+## Information the App Accesses
+
+To function, the App connects to the Spotify API using credentials you provide (your own Spotify Client ID and Client Secret). Through this connection the App accesses:
+
+- Your list of followed artists on Spotify
+- Track and album metadata for those artists
+- Your Spotify account display name (for authentication purposes)
+
+## Data Storage and Processing
+
+**All data stays on your device.** The App does not operate any server or backend service. Specifically:
+
+- Your Spotify Client ID and Client Secret are stored locally on your device and are only used to authenticate directly with Spotify's servers.
+- Playlist data, artist cooldown history, and app preferences are stored locally on your device using Android's SharedPreferences.
+- The App includes a diagnostics export tool; any exported data is saved to your device and is never transmitted automatically.
+
+## Data the App Does NOT Collect
+
+- The App does not collect analytics, usage data, or crash reports.
+- The App does not use advertising SDKs or tracking technologies.
+- The App does not transmit any personal data to the developer or any third party (other than Spotify, as described above).
+
+## Third-Party Services
+
+The App communicates solely with the **Spotify Web API** to retrieve your music library data. Your use of Spotify is governed by [Spotify's Privacy Policy](https://www.spotify.com/privacy). No other third-party services are used.
+
+## Children's Privacy
+
+The App is not directed at children under the age of 13 and does not knowingly collect information from children.
+
+## Changes to This Policy
+
+If this Privacy Policy is updated, the revised version will be posted at this same URL with an updated effective date.
+
+## Contact
+
+If you have questions about this Privacy Policy, you can reach the developer at:
+
+**[your-email@example.com]**
