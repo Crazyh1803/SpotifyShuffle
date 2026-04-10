@@ -13,8 +13,11 @@
 }
 
 # Security-crypto / Google Tink
-# EncryptedSharedPreferences depends on Tink, which references errorprone annotations
-# at compile time only. R8 can't find them in the release classpath — suppress the warning.
+# EncryptedSharedPreferences depends on Tink internally. Tink in turn references several
+# compile-time-only or optional libraries (errorprone annotations, Google API Client,
+# Joda Time) that are not shipped with the APK. Suppress R8 missing-class warnings for
+# all of them — none are used by the code paths we actually call.
 -keep class androidx.security.crypto.** { *; }
--keep class com.google.crypto.tink.** { *; }
 -dontwarn com.google.errorprone.annotations.**
+-dontwarn com.google.api.client.**
+-dontwarn org.joda.time.**
