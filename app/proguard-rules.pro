@@ -51,6 +51,19 @@
     <fields>;
 }
 
+# Gson TypeToken — R8 strips generic signatures from anonymous TypeToken subclasses.
+# Without this, fromJson() on generic types (List<Artist>, Map<String, GapArtistEntry>)
+# silently returns null/empty, causing the app to behave as if caches are always empty.
+# Both ArtistTrackCache and GapArtistCache use TypeToken — both are broken without this rule.
+-keep,allowobfuscation,allowshrinking class com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
+
+# Keep fields annotated with @SerializedName so Gson can map JSON keys to fields
+# even if R8 renames the field for other reasons.
+-keepclassmembers,allowobfuscation class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}
+
 # ── Misc annotation libraries ─────────────────────────────────────────────────
 -dontwarn javax.annotation.**
 -dontwarn org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement
