@@ -91,6 +91,16 @@ class TokenStorage(context: Context) {
         set(value) = prefs.edit().putString(KEY_GRANTED_SCOPES, value).apply()
 
     /**
+     * Spotify Developer Client ID entered by the user on first launch.
+     * Stored here (SharedPreferences) rather than in the Gson JSON settings file
+     * so it survives R8 minification reliably in release builds.
+     */
+    var clientId: String?
+        get() = prefs.getString(KEY_CLIENT_ID, null)
+        set(value) = if (value != null) prefs.edit().putString(KEY_CLIENT_ID, value).apply()
+                     else prefs.edit().remove(KEY_CLIENT_ID).apply()
+
+    /**
      * Returns true if we have an access token that won't expire for at least 60 seconds.
      */
     fun isTokenValid(): Boolean =
@@ -117,5 +127,6 @@ class TokenStorage(context: Context) {
         const val KEY_PLAYLIST_ID = "playlist_id"
         const val KEY_GRANTED_SCOPES = "granted_scopes"
         const val KEY_CODE_VERIFIER = "pkce_code_verifier"
+        const val KEY_CLIENT_ID = "client_id"
     }
 }

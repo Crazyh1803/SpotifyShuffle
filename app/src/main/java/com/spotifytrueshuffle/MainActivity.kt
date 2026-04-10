@@ -37,7 +37,12 @@ class MainActivity : ComponentActivity() {
         // ── Dependency wiring ────────────────────────────────────────────────
         val tokenStorage   = TokenStorage(applicationContext)
         val appSettings    = AppSettingsStorage(applicationContext)
-        authManager        = SpotifyAuthManager(tokenStorage) { appSettings.load().clientId }
+        // Read client ID from TokenStorage (SharedPreferences) first — R8-safe.
+        // Fall back to Gson settings file for installs that saved it there previously.
+        authManager        = SpotifyAuthManager(tokenStorage) {
+            tokenStorage.clientId?.takeIf { it.isNotEmpty() }
+                ?: appSettings.load().clientId
+        }
         val repository     = SpotifyRepository(buildApiService(tokenStorage), authManager, tokenStorage)
         val shuffleEngine  = TrueShuffleEngine()
         val trackCache     = ArtistTrackCache(applicationContext)
@@ -76,7 +81,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val uri = intent?.data ?: return
-        if (uri.scheme == "com.spotifytrueshuffle" && uri.host == "callback") {
+        if (uri.scheme == "com.appsbydan.trueshuffle" && uri.host == "callback") {
             val code  = uri.getQueryParameter("code")
             val error = uri.getQueryParameter("error")
             when {

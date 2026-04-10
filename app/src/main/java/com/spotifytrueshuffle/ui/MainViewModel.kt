@@ -158,7 +158,9 @@ class MainViewModel(
      * Saves the ID and transitions to the normal NotLoggedIn home screen.
      */
     fun completeSetup(clientId: String) {
-        appSettings.saveClientId(clientId.trim())
+        val trimmed = clientId.trim()
+        appSettings.saveClientId(trimmed)       // Gson JSON (may fail in release under R8)
+        tokenStorage.clientId = trimmed         // SharedPreferences — R8-safe, authoritative
         _uiState.value = UiState.NotLoggedIn
     }
 
