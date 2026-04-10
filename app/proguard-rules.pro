@@ -1,14 +1,47 @@
-# Retrofit / OkHttp
+# ── Kotlin ───────────────────────────────────────────────────────────────────
+# Keep Kotlin metadata (required for reflection, coroutines, etc.)
+-keep class kotlin.Metadata { *; }
+-dontwarn kotlin.Unit
+
+# ── Retrofit + Kotlin coroutines ─────────────────────────────────────────────
+# Retrofit uses reflection on generic method signatures and parameter annotations.
+# InnerClasses + EnclosingMethod are required alongside Signature.
+-keepattributes Signature, InnerClasses, EnclosingMethod
+-keepattributes RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations, AnnotationDefault
+
+# Keep Retrofit itself
+-keep class retrofit2.** { *; }
+-dontwarn retrofit2.KotlinExtensions
+-dontwarn retrofit2.KotlinExtensions$*
+
+# Keep all @retrofit2.http.* annotated interface methods (the actual API calls).
+# Without this R8 can remove interface methods it thinks are uncalled.
+-keepclassmembers,allowshrinking,allowobfuscation interface * {
+    @retrofit2.http.* <methods>;
+}
+
+# R8 full mode: proxy-created interfaces have no visible subtypes, so R8 nulls them out.
+# These two rules keep any interface that contains @retrofit2.http.* methods.
+-if interface * { @retrofit2.http.* <methods>; }
+-keep,allowobfuscation interface <1>
+-if interface * { @retrofit2.http.* <methods>; }
+-keep,allowobfuscation interface * extends <1>
+
+# Keep generic signatures on Retrofit's Call/Response and Kotlin's Continuation so
+# that Gson can read the parameterised type (e.g. PagingObject<Track>) at runtime.
+# Without these rules you get: Class cannot be cast to ParameterizedType.
+-keep,allowobfuscation,allowshrinking interface retrofit2.Call
+-keep,allowobfuscation,allowshrinking class retrofit2.Response
+-keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
+
+# ── OkHttp ───────────────────────────────────────────────────────────────────
+-keep class okhttp3.** { *; }
 -dontwarn okhttp3.**
 -dontwarn okio.**
--keepattributes Signature
--keepattributes *Annotation*
--keep class retrofit2.** { *; }
--keep class okhttp3.** { *; }
 
-# Gson / data models
-# Keep ALL classes that are serialized/deserialized with Gson — R8 strips and renames
-# fields in release builds which breaks Gson's reflection-based serialization entirely.
+# ── Gson / data models ────────────────────────────────────────────────────────
+# Keep ALL classes that are serialised/deserialised with Gson.
+# R8 strips and renames fields in release builds, breaking Gson's reflection.
 -keep class com.spotifytrueshuffle.api.** { *; }
 -keepclassmembers class com.spotifytrueshuffle.api.** {
     <fields>;
@@ -18,11 +51,13 @@
     <fields>;
 }
 
-# Security-crypto / Google Tink
-# EncryptedSharedPreferences depends on Tink internally. Tink in turn references several
-# compile-time-only or optional libraries (errorprone annotations, Google API Client,
-# Joda Time) that are not shipped with the APK. Suppress R8 missing-class warnings for
-# all of them — none are used by the code paths we actually call.
+# ── Misc annotation libraries ─────────────────────────────────────────────────
+-dontwarn javax.annotation.**
+-dontwarn org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement
+
+# ── Security-crypto / Google Tink ─────────────────────────────────────────────
+# EncryptedSharedPreferences depends on Tink internally. Tink references several
+# optional libraries not shipped in the APK. Suppress the missing-class warnings.
 -keep class androidx.security.crypto.** { *; }
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn com.google.api.client.**
