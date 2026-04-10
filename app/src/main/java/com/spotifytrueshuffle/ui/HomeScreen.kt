@@ -3,6 +3,7 @@ package com.spotifytrueshuffle.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -40,6 +41,8 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val settingsVisible by viewModel.settingsVisible.collectAsState()
+    val showBirthdayDialog by viewModel.showBirthdayDialog.collectAsState()
+    val context = LocalContext.current
 
     SpotifyTrueShuffleTheme {
         Surface(
@@ -110,6 +113,52 @@ fun HomeScreen(
                         SettingsSheet(
                             viewModel = viewModel,
                             onDismiss = { viewModel.closeSettings() }
+                        )
+                    }
+
+                    // ── Birthday donation dialog (May 7) ──────────────────────
+                    if (showBirthdayDialog) {
+                        AlertDialog(
+                            onDismissRequest = { viewModel.dismissBirthdayDialog() },
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            title = {
+                                Text(
+                                    "It's my birthday! 🎂",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            },
+                            text = {
+                                Text(
+                                    "If True Shuffle has been bringing you joy, " +
+                                    "today would be a great day to buy me a drink. " +
+                                    "It keeps the app alive and the updates coming!",
+                                    color = SpotifyLightGray
+                                )
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        viewModel.dismissBirthdayDialog()
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW,
+                                                Uri.parse("https://www.buymeacoffee.com/AppsbyDan"))
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFFFDD00),
+                                        contentColor = Color.Black
+                                    )
+                                ) {
+                                    Text("Buy me a drink", fontWeight = FontWeight.SemiBold)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { viewModel.dismissBirthdayDialog() }) {
+                                    Text("Maybe later", color = SpotifyLightGray)
+                                }
+                            }
                         )
                     }
                 }

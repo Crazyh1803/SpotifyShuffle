@@ -110,6 +110,12 @@ class MainViewModel(
     private val _scanProgress = MutableStateFlow<ScanProgress?>(null)
     val scanProgress: StateFlow<ScanProgress?> = _scanProgress.asStateFlow()
 
+    /** True on May 7 — triggers a birthday donation dialog. Dismissed permanently for the session. */
+    private val _showBirthdayDialog = MutableStateFlow(false)
+    val showBirthdayDialog: StateFlow<Boolean> = _showBirthdayDialog.asStateFlow()
+
+    fun dismissBirthdayDialog() { _showBirthdayDialog.value = false }
+
     /** How often gap-artist tracks are automatically re-scanned (0 = manual only). */
     private val _trackRescanIntervalDays = MutableStateFlow(appSettings.load().trackRescanIntervalDays)
     val trackRescanIntervalDays: StateFlow<Int> = _trackRescanIntervalDays.asStateFlow()
@@ -134,6 +140,11 @@ class MainViewModel(
         // Restore last known scan progress so the status shows before the first build
         if (settings.lastScanScanned >= 0 && settings.lastScanTotal > 0) {
             _scanProgress.value = ScanProgress(settings.lastScanScanned, settings.lastScanTotal)
+        }
+        // Show birthday donation dialog on May 7
+        val today = java.time.MonthDay.now()
+        if (today == java.time.MonthDay.of(5, 7)) {
+            _showBirthdayDialog.value = true
         }
     }
 

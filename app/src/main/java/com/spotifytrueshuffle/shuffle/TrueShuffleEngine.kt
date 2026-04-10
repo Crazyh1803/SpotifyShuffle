@@ -68,9 +68,17 @@ class TrueShuffleEngine {
         discoveryBias: Int = 60,
         targetDurationMs: Long = 2L * 60 * 60 * 1000
     ): List<Track> {
+        // Filter out non-music tracks (skits, interludes, etc.) from every artist's pool
+        // before any selection logic runs. Falls back to the unfiltered list for artists
+        // where filtering would leave them with zero tracks.
+        val filteredTracksByArtist = tracksByArtist.mapValues { (_, tracks) ->
+            val filtered = tracks.filter { !isNonMusicTrack(it.name) }
+            filtered.ifEmpty { tracks }  // never leave an artist empty due to filtering
+        }
+
         // Only keep artists for whom we actually have tracks
         val artistsWithTracks = followedArtists.filter {
-            tracksByArtist[it.id]?.isNotEmpty() == true
+            filteredTracksByArtist[it.id]?.isNotEmpty() == true
         }
         if (artistsWithTracks.isEmpty()) return emptyList()
 
@@ -90,7 +98,7 @@ class TrueShuffleEngine {
 
         for (artist in orderedArtists) {
             if (totalMs >= targetDurationMs) break
-            val tracks = tracksByArtist[artist.id] ?: continue
+            val tracks = filteredTracksByArtist[artist.id] ?: continue
             val track = selectTrack(
                 tracks,
                 isRareArtist = artist.id !in topArtistIds,
@@ -106,7 +114,7 @@ class TrueShuffleEngine {
             val usedTrackIds = playlist.map { it.id }.toMutableSet()
             for (artist in orderedArtists.shuffled()) {
                 if (totalMs >= targetDurationMs) break
-                val remaining = tracksByArtist[artist.id]?.filter { it.id !in usedTrackIds }
+                val remaining = filteredTracksByArtist[artist.id]?.filter { it.id !in usedTrackIds }
                 if (remaining.isNullOrEmpty()) continue
                 val track = remaining.random()
                 playlist.add(track)
@@ -261,5 +269,25 @@ class TrueShuffleEngine {
         // x² biases toward index 0 (least popular = deepest cut).
         val rawIdx = (Random.nextDouble().pow(2.0) * sorted.size).toInt()
         return sorted[rawIdx.coerceIn(0, sorted.size - 1)]
+    }
+
+    /**
+     * Returns true if the track name looks like a non-music filler track that should
+     * be excluded from playlists. Matches on whole words so "Interlude" doesn't catch
+     * a song legitimately titled e.g. "Prelude to a Kiss".
+     *
+     * Matched terms (case-insensitive): skit, interlude, intro, outro, reprise,
+     * spoken word, spoken, transition, commentary.
+     */
+    private fun isNonMusicTrack(name: String): Boolean {
+        val lower = name.lowercase()
+        val noiseWords = listOf(
+            "skit", "interlude", "intro", "outro", "reprise",
+            "spoken word", "spoken", "transition", "commentary"
+        )
+        return noiseWords.any { word ->
+            // Match as a whole word or surrounded by punctuation/parens
+            Regex("\\b${Regex.escape(word)}\\b").containsMatchIn(lower)
+        }
     }
 }
