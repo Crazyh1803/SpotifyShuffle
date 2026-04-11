@@ -33,7 +33,9 @@ data class AppSettings(
     /** Last known scan progress — persisted so the status survives app restarts.
      *  -1 means no build has completed yet. */
     val lastScanScanned: Int = -1,
-    val lastScanTotal: Int = -1
+    val lastScanTotal: Int = -1,
+    /** Per-strategy breakdown from the most recent gap-fill scan. Empty if no scan has run. */
+    val lastScanLog: String = ""
 )
 
 /** Reads and writes [AppSettings] to/from internal app storage via Gson. */
@@ -89,5 +91,9 @@ class AppSettingsStorage(context: Context) {
 
     fun saveLastScanProgress(scanned: Int, total: Int) {
         save(load().copy(lastScanScanned = scanned, lastScanTotal = total))
+    }
+
+    fun saveLastScanLog(log: String) {
+        save(load().copy(lastScanLog = log))
     }
 }

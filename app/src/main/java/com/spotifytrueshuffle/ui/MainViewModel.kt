@@ -337,6 +337,9 @@ class MainViewModel(
                 add("No build completed this session yet")
             }
             add("")
+            add("--- Last Scan Detail ---")
+            add(if (settings.lastScanLog.isNotEmpty()) settings.lastScanLog else "(no scan has run yet)")
+            add("")
             add("--- Settings ---")
             add("Discovery bias         : ${settings.discoveryBias}%")
             add("Playlist duration      : ${settings.playlistDurationMs / 60_000} min")
@@ -484,6 +487,9 @@ class MainViewModel(
                 // Persist newly scanned entries (merged with existing cache)
                 if (buildResult.newlyScanned.isNotEmpty()) {
                     gapArtistCache.save(cachedEntries + buildResult.newlyScanned)
+                }
+                if (buildResult.scanLog.isNotEmpty()) {
+                    appSettings.saveLastScanLog(buildResult.scanLog)
                 }
 
                 // Update scan progress for the success screen.

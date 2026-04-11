@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 private const val TAG = "SpotifyRepository"
 
@@ -64,7 +65,8 @@ data class TrackPoolBuildResult(
     val pool: TrackPool,
     val newlyScanned: Map<String, GapArtistEntry>,
     val totalGapArtists: Int,
-    val totalCached: Int
+    val totalCached: Int,
+    val scanLog: String = ""
 )
 
 /**
@@ -310,9 +312,16 @@ class SpotifyRepository(
             Log.d(TAG, "Gap fill 4b: ${unscannedIds.size} unscanned + ${staleIds.size} stale → " +
                 "scanning ${toScan.size} this build")
 
+            var scanLog = ""  // populated below when toScan is non-empty
+
             if (toScan.isNotEmpty()) {
                 val topTracksBlocked = AtomicBoolean(false)
                 val semaphore = Semaphore(2)   // 2 concurrent — keeps burst rate well under Spotify's limit
+
+                val s1Found  = AtomicInteger(0)  // artists resolved via Strategy 1 (albums)
+                val s2Found  = AtomicInteger(0)  // artists resolved via Strategy 2 (top-tracks)
+                val s3Found  = AtomicInteger(0)  // artists resolved via Strategy 3 (search)
+                val sFailed  = AtomicInteger(0)  // artists that returned empty from all strategies
 
                 val scanResults: List<List<Track>> = coroutineScope {
                     toScan.mapIndexed { index, artistId ->
@@ -324,6 +333,7 @@ class SpotifyRepository(
                                 val artistName = artistNameById[artistId] ?: artistId
                                 onScanProgress?.invoke(artistName, index + 1, toScan.size)
                                 val found = mutableListOf<Track>()
+                                var foundBy = 0  // 0=none, 1=albums, 2=topTracks, 3=search
 
                                 // ── Strategy 1: album-based (preferred) ─────────────────────
                                 // Fetches up to 50 of the artist's releases (albums, singles,
@@ -378,6 +388,7 @@ class SpotifyRepository(
                                         else -> Log.w(TAG, "getArtistAlbums($artistId) ${e.code()} — falling back")
                                     }
                                 }
+                                if (found.isNotEmpty()) foundBy = 1
 
                                 // ── Strategy 2: top-tracks ───────────────────────────────────
                                 // Falls back here when Strategy 1 found nothing. Blocked (403)
@@ -395,6 +406,7 @@ class SpotifyRepository(
                                         }
                                     }
                                 }
+                                if (found.isNotEmpty() && foundBy == 0) foundBy = 2
 
                                 // ── Strategy 3: search ───────────────────────────────────────
                                 // Last resort. No market required — search is a catalog endpoint
@@ -409,6 +421,7 @@ class SpotifyRepository(
                                         try {
                                             val results = api.searchTracks(
                                                 query = "artist:\"$name\"",
+                                                type = "track",
                                                 market = null,
                                                 limit = 10
                                             ).tracks.items
@@ -419,12 +432,24 @@ class SpotifyRepository(
                                         }
                                     }
                                 }
+                                if (found.isNotEmpty() && foundBy == 0) foundBy = 3
+
+                                // Increment per-strategy diagnostic counter
+                                when (foundBy) {
+                                    1    -> s1Found.incrementAndGet()
+                                    2    -> s2Found.incrementAndGet()
+                                    3    -> s3Found.incrementAndGet()
+                                    else -> sFailed.incrementAndGet()
+                                }
 
                                 found
                             }
                         }
                     }.awaitAll()
                 }
+
+                scanLog = "Scanned ${toScan.size}: albums=$s1Found top=$s2Found search=$s3Found failed=$sFailed"
+                Log.d(TAG, scanLog)
 
                 // Merge scan results into pool and build newlyScanned map.
                 // Shuffle + take(40) so we store a randomised sample rather than the first N
@@ -463,7 +488,8 @@ class SpotifyRepository(
                 ),
                 newlyScanned = newlyScanned,
                 totalGapArtists = totalGapArtists,
-                totalCached = loadedFromCache
+                totalCached = loadedFromCache,
+                scanLog = scanLog
             )
         }
 
