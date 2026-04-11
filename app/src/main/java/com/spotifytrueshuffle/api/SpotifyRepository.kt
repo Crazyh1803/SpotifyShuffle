@@ -386,7 +386,7 @@ class SpotifyRepository(
                                 // subsequent artists after the first 403 to avoid hammering.
                                 if (found.isEmpty() && !topTracksBlocked.get()) {
                                     try {
-                                        found.addAll(api.getArtistTopTracks(artistId).tracks)
+                                        found.addAll(api.getArtistTopTracks(artistId, market = null).tracks)
                                     } catch (e: retrofit2.HttpException) {
                                         when (e.code()) {
                                             429  -> return@withPermit found
