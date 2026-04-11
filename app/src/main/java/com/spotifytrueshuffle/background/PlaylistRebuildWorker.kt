@@ -104,7 +104,7 @@ class PlaylistRebuildWorker(
             // Shuffle
             val history  = historyStorage.load()
             val cooldown = historyStorage.getCooldownSets(history.cooldownPlaylists, history)
-            val tracks   = shuffleEngine.buildPlaylist(
+            val playlistResult = shuffleEngine.buildPlaylist(
                 followedArtists   = library.followedArtists,
                 topArtistIds      = topArtistIds,
                 tracksByArtist    = buildResult.pool.tracksByArtist,
@@ -115,6 +115,7 @@ class PlaylistRebuildWorker(
                 discoveryBias     = settings.discoveryBias,
                 targetDurationMs  = settings.playlistDurationMs
             )
+            val tracks = playlistResult.tracks
             if (tracks.isEmpty()) {
                 Log.w(TAG, "Shuffle produced no tracks — skipping"); return Result.success()
             }
@@ -144,9 +145,9 @@ class PlaylistRebuildWorker(
 
             val durationMin = tracks.sumOf { it.durationMs.toLong() } / 60_000
             val artistCount = tracks.flatMap { it.artists }.map { it.id }.toSet().size
-            val tierCCount  = tracks.count { t -> t.artists.firstOrNull()?.id in buildResult.pool.discoveryArtistIds }
-            val tierACount  = tracks.count { t -> t.artists.firstOrNull()?.id in topArtistIds }
-            val tierBCount  = tracks.size - tierCCount - tierACount
+            val tierCCount  = playlistResult.tierCCount
+            val tierACount  = playlistResult.tierACount
+            val tierBCount  = playlistResult.tierBCount
             Log.d(TAG, "Background build done: ${tracks.size} tracks, $durationMin min")
 
             postNotification(tracks.size, durationMin.toInt(), artistCount, tierCCount, tierBCount, tierACount)

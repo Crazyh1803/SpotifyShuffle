@@ -34,6 +34,21 @@ import kotlin.random.Random
  *   76–90 %  →  5 : 4 : 1  (50 % C, 40 % B, 10 % A)
  *   91–100 % →  9 : 4 : 1  (64 % C, 29 % B,  7 % A)
  */
+/**
+ * Result of [TrueShuffleEngine.buildPlaylist].
+ *
+ * Tier counts are tracked INSIDE the engine by which artist each track was
+ * selected for — not post-hoc from track.artists — which is the only reliable
+ * method because featured/collaborative tracks can have a different primary
+ * artist than the one whose pool they were drawn from.
+ */
+data class PlaylistBuildResult(
+    val tracks: List<Track>,
+    val tierACount: Int,
+    val tierBCount: Int,
+    val tierCCount: Int
+)
+
 class TrueShuffleEngine {
 
     /**
@@ -67,7 +82,7 @@ class TrueShuffleEngine {
         cooldownTrackIds: Set<String> = emptySet(),
         discoveryBias: Int = 60,
         targetDurationMs: Long = 2L * 60 * 60 * 1000
-    ): List<Track> {
+    ): PlaylistBuildResult {
         // Filter out non-music tracks (skits, interludes, etc.) from every artist's pool
         // before any selection logic runs. Falls back to the unfiltered list for artists
         // where filtering would leave them with zero tracks.
@@ -92,9 +107,15 @@ class TrueShuffleEngine {
             freshArtists, topArtistIds, discoveryArtistIds, discoveryBias
         ) + cooldownFallbackArtists.shuffled()
 
-        // Pick one track per artist, stopping when we reach the target duration
+        // Pick one track per artist, stopping when we reach the target duration.
+        // Tier counts are accumulated HERE by artist ID — this is the only reliable
+        // method. Post-hoc attribution from track.artists fails for collaborative
+        // tracks where the featured artist may be listed first.
         val playlist = mutableListOf<Track>()
         var totalMs = 0L
+        var tierACount = 0
+        var tierBCount = 0
+        var tierCCount = 0
 
         for (artist in orderedArtists) {
             if (totalMs >= targetDurationMs) break
@@ -107,6 +128,11 @@ class TrueShuffleEngine {
             )
             playlist.add(track)
             totalMs += track.durationMs
+            when {
+                artist.id in discoveryArtistIds -> tierCCount++
+                artist.id in topArtistIds       -> tierACount++
+                else                            -> tierBCount++
+            }
         }
 
         // Second pass if we're still short: allow repeat artists, avoid exact same track
@@ -120,10 +146,20 @@ class TrueShuffleEngine {
                 playlist.add(track)
                 usedTrackIds.add(track.id)
                 totalMs += track.durationMs
+                when {
+                    artist.id in discoveryArtistIds -> tierCCount++
+                    artist.id in topArtistIds       -> tierACount++
+                    else                            -> tierBCount++
+                }
             }
         }
 
-        return playlist
+        return PlaylistBuildResult(
+            tracks = playlist,
+            tierACount = tierACount,
+            tierBCount = tierBCount,
+            tierCCount = tierCCount
+        )
     }
 
     /**

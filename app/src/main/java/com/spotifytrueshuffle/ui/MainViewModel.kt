@@ -471,11 +471,11 @@ class MainViewModel(
                     market = user.country,
                     cachedEntries = cachedEntries,
                     rescanThresholdMs = rescanThresholdMs,
-                    onScanProgress = { artistName, scanned, total ->
-                        // Update the building message with the current artist name so the
-                        // user can see it scanning — matches the behaviour from earlier versions.
+                    onScanProgress = { artistName, _, _ ->
+                        // Scroll the artist name quietly — no numbers, just visual feedback
+                        // that scanning is happening in the background.
                         _uiState.value = UiState.Building(
-                            "Scanning $artistName… ($scanned of $total)",
+                            "Scanning $artistName…",
                             3, 4
                         )
                     }
@@ -530,7 +530,7 @@ class MainViewModel(
                 val currentDurationMs = _playlistDurationMs.value
                 Log.d(TAG, "Building with discoveryBias=$currentBias, durationMs=$currentDurationMs")
 
-                val tracks = shuffleEngine.buildPlaylist(
+                val playlistResult = shuffleEngine.buildPlaylist(
                     followedArtists = library.followedArtists,
                     topArtistIds = topArtistIds,
                     tracksByArtist = tracksByArtist,
@@ -541,6 +541,7 @@ class MainViewModel(
                     discoveryBias = currentBias,
                     targetDurationMs = currentDurationMs
                 )
+                val tracks = playlistResult.tracks
 
                 if (tracks.isEmpty()) {
                     _uiState.value = UiState.Error(
@@ -557,25 +558,16 @@ class MainViewModel(
                 val playlistArtistIds = tracks.flatMap { it.artists }.map { it.id }.distinct()
                 historyStorage.recordPlaylist(playlistTrackIds, playlistArtistIds, history.cooldownPlaylists)
 
-                // Count tier membership for the success screen breakdown.
-                // We check ALL of a track's artists (not just the first) because gap-fill
-                // tracks fetched from albums sometimes list a featured artist as primary —
-                // using firstOrNull() alone caused discovery tracks to be miscounted as Tier B.
-                // Priority: C > A > B (a track featuring both a top and a discovery artist
-                // is a discovery win and should be credited as such).
-                val tierCCount = tracks.count { track ->
-                    track.artists.any { it.id in trackPool.discoveryArtistIds }
-                }
-                val tierACount = tracks.count { track ->
-                    track.artists.none { it.id in trackPool.discoveryArtistIds } &&
-                    track.artists.any { it.id in topArtistIds }
-                }
-                val tierBCount = tracks.size - tierCCount - tierACount
+                // Tier counts come directly from the engine (counted by artist ID at selection
+                // time) — not post-hoc from track.artists, which is wrong for featured tracks.
+                val tierCCount = playlistResult.tierCCount
+                val tierACount = playlistResult.tierACount
+                val tierBCount = playlistResult.tierBCount
 
                 val totalDurationMs = tracks.sumOf { it.durationMs.toLong() }
                 val artistsRepresented = tracks.flatMap { it.artists }.map { it.id }.toSet().size
 
-                Log.d(TAG, "Tier breakdown: C=$tierCCount, B=$tierBCount, A=$tierACount")
+                Log.d(TAG, "Tier breakdown: C=$tierCCount, B=$tierBCount, A=$tierACount, discoveryArtistIds=${trackPool.discoveryArtistIds.size}")
 
                 _uiState.value = UiState.Success(
                     playlistUrl = playlistUrl,
