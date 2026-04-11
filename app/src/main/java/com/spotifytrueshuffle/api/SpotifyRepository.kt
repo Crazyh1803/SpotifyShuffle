@@ -326,77 +326,67 @@ class SpotifyRepository(
                                 val found = mutableListOf<Track>()
 
                                 // ── Strategy 1: album-based (preferred) ─────────────────────
-                                // Picks 2 random albums/singles from the artist's discography
-                                // and fetches their full track lists. This surfaces genuine
-                                // variety — not just the same 10 popularity-ranked hits every time.
-                                // On each rescan cycle different albums are selected, so the
-                                // cache rotates naturally.
+                                // Fetches up to 50 of the artist's releases (albums, singles,
+                                // AND appears_on) with no market filter so we see everything
+                                // globally. We iterate through all returned albums in random
+                                // order, stopping as soon as we have at least 5 tracks.
                                 //
-                                // NOTE: getArtistAlbums is called WITHOUT a market filter so we
-                                // see all of the artist's releases globally. Passing market here
-                                // filters to albums licensed in that country — many niche artists
-                                // have zero albums available in some markets, making every scan
-                                // return empty. Market is still passed to getAlbumTracks below
-                                // so only tracks that are actually playable are added to the pool.
+                                // No market on getAlbumTracks either — Spotify handles
+                                // playability at playback time, same as Source 3 (saved albums).
+                                // Passing market here caused every scan to return [] for
+                                // region-restricted albums, which was the root cause of all
+                                // 145 gap-artist entries being empty.
                                 try {
                                     val albumsPage = api.getArtistAlbums(
                                         artistId = artistId,
-                                        includeGroups = "album,single",
-                                        limit = 20
-                                        // no market — fetch all global releases
+                                        includeGroups = "album,single,appears_on",
+                                        limit = 50
                                     )
-                                    if (albumsPage.items.isNotEmpty()) {
-                                        // Shuffle so we pick different albums each rescan
-                                        val selectedAlbums = albumsPage.items.shuffled().take(2)
-                                        for (album in selectedAlbums) {
-                                            try {
-                                                val tracksPage = api.getAlbumTracks(
-                                                    albumId = album.id,
-                                                    limit = 50
-                                                    // No market filter: we want all tracks the artist released,
-                                                    // not just those licensed in the user's country. Spotify
-                                                    // handles playability at playback time — a grayed-out track
-                                                    // is far better than an entirely empty artist pool.
-                                                    // (Same behaviour as Source 3 / saved albums.)
-                                                )
-                                                tracksPage.items
-                                                    .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
-                                                    .forEach { st ->
-                                                        found.add(Track(
-                                                            id = st.id,
-                                                            name = st.name,
-                                                            durationMs = st.durationMs,
-                                                            popularity = 0, // simplified track — no score
-                                                            uri = st.uri,
-                                                            artists = st.artists,
-                                                            album = AlbumSimple(
-                                                                id = album.id,
-                                                                name = album.name,
-                                                                releaseDate = album.releaseDate,
-                                                                images = album.images
-                                                            ),
-                                                            previewUrl = st.previewUrl
-                                                        ))
-                                                    }
-                                            } catch (e: retrofit2.HttpException) {
-                                                Log.w(TAG, "getAlbumTracks(${album.id}) ${e.code()} — skipping album")
-                                            }
+                                    for (album in albumsPage.items.shuffled()) {
+                                        if (found.size >= 5) break   // enough variety — stop here
+                                        try {
+                                            val tracksPage = api.getAlbumTracks(
+                                                albumId = album.id,
+                                                limit = 50
+                                            )
+                                            tracksPage.items
+                                                .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                                                .forEach { st ->
+                                                    found.add(Track(
+                                                        id = st.id,
+                                                        name = st.name,
+                                                        durationMs = st.durationMs,
+                                                        popularity = 0,
+                                                        uri = st.uri,
+                                                        artists = st.artists,
+                                                        album = AlbumSimple(
+                                                            id = album.id,
+                                                            name = album.name,
+                                                            releaseDate = album.releaseDate,
+                                                            images = album.images
+                                                        ),
+                                                        previewUrl = st.previewUrl
+                                                    ))
+                                                }
+                                        } catch (e: retrofit2.HttpException) {
+                                            Log.w(TAG, "getAlbumTracks(${album.id}) ${e.code()} — skipping")
                                         }
                                     }
                                 } catch (e: retrofit2.HttpException) {
                                     when (e.code()) {
-                                        429  -> return@withPermit found  // rate limit — bail immediately
+                                        429  -> return@withPermit found
                                         else -> Log.w(TAG, "getArtistAlbums($artistId) ${e.code()} — falling back")
                                     }
                                 }
 
-                                // ── Strategy 2: top-tracks fallback ─────────────────────────
-                                // Fires when album fetch returned nothing (e.g. market unavailable,
-                                // artist has no albums/singles, or API error). Top-tracks are
-                                // popularity-ranked hits, so this is the less-preferred path.
+                                // ── Strategy 2: top-tracks ───────────────────────────────────
+                                // Falls back here when Strategy 1 found nothing. Blocked (403)
+                                // for apps without Spotify quota extension, but we still try
+                                // in case the user's app has it. The AtomicBoolean skips all
+                                // subsequent artists after the first 403 to avoid hammering.
                                 if (found.isEmpty() && !topTracksBlocked.get()) {
                                     try {
-                                        found.addAll(api.getArtistTopTracks(artistId, market = market).tracks)
+                                        found.addAll(api.getArtistTopTracks(artistId).tracks)
                                     } catch (e: retrofit2.HttpException) {
                                         when (e.code()) {
                                             429  -> return@withPermit found
@@ -406,21 +396,23 @@ class SpotifyRepository(
                                     }
                                 }
 
-                                // ── Strategy 3: search fallback ─────────────────────────────
-                                // Last resort — fires when top-tracks is blocked (403) and
-                                // album fetch gave nothing.
-                                if (found.isEmpty() && market != null) {
+                                // ── Strategy 3: search ───────────────────────────────────────
+                                // Last resort. No market required — search is a catalog endpoint
+                                // that works regardless of the user's country setting.
+                                // We prefer tracks where the artist ID matches; if the strict
+                                // filter returns nothing (e.g. name collision or ID mismatch),
+                                // we fall back to using the raw search results so we always
+                                // surface SOMETHING rather than leaving the artist pool empty.
+                                if (found.isEmpty()) {
                                     val name = artistNameById[artistId]
                                     if (name != null) {
                                         try {
                                             val results = api.searchTracks(
                                                 query = "artist:\"$name\"",
-                                                market = market,
                                                 limit = 10
                                             ).tracks.items
-                                            found.addAll(results.filter { track ->
-                                                track.artists.any { it.id == artistId }
-                                            })
+                                            val byId = results.filter { t -> t.artists.any { it.id == artistId } }
+                                            found.addAll(byId.ifEmpty { results })
                                         } catch (e: retrofit2.HttpException) {
                                             Log.w(TAG, "searchTracks($artistId) ${e.code()} — skipping")
                                         }
