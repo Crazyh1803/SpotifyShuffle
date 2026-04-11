@@ -95,7 +95,7 @@ class TrueShuffleEngine {
         val artistsWithTracks = followedArtists.filter {
             filteredTracksByArtist[it.id]?.isNotEmpty() == true
         }
-        if (artistsWithTracks.isEmpty()) return emptyList()
+        if (artistsWithTracks.isEmpty()) return PlaylistBuildResult(emptyList(), 0, 0, 0)
 
         // Partition: artists on cooldown are placed after all fresh artists so they
         // only fill in if the playlist would otherwise fall short of targetDurationMs.
