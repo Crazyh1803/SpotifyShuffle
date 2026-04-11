@@ -352,8 +352,12 @@ class SpotifyRepository(
                                             try {
                                                 val tracksPage = api.getAlbumTracks(
                                                     albumId = album.id,
-                                                    limit = 50,
-                                                    market = market  // playback filter — only tracks listenable in user's market
+                                                    limit = 50
+                                                    // No market filter: we want all tracks the artist released,
+                                                    // not just those licensed in the user's country. Spotify
+                                                    // handles playability at playback time — a grayed-out track
+                                                    // is far better than an entirely empty artist pool.
+                                                    // (Same behaviour as Source 3 / saved albums.)
                                                 )
                                                 tracksPage.items
                                                     .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }

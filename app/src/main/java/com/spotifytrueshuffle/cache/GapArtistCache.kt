@@ -75,6 +75,24 @@ class GapArtistCache(context: Context) {
                 return emptyMap()
             }
 
+            // One-time migration: reset timestamps for entries that were scanned but came back
+            // empty. This covers bugs in previous builds (e.g. getArtistAlbums market filter)
+            // that caused every scan to return no tracks. Resetting to 0L lets the next build
+            // retry them once with the fixed scanning code.
+            // After the retry: if tracks are found the entry gets a real timestamp and stays.
+            // If still empty the entry gets a new real timestamp → no more automatic retry
+            // (user can force a rescan via Settings → Scan for new tracks).
+            val emptyScanned = result.values.count { it.scannedAtMs > 0L && it.tracks.isEmpty() }
+            if (emptyScanned > 0) {
+                Log.w(TAG, "Migrating $emptyScanned empty scanned entries → scannedAtMs=0 for one retry")
+                val migrated = result.mapValues { (_, entry) ->
+                    if (entry.scannedAtMs > 0L && entry.tracks.isEmpty()) entry.copy(scannedAtMs = 0L)
+                    else entry
+                }
+                save(migrated)   // persist now so subsequent load() calls see scannedAtMs=0, not >0
+                return migrated
+            }
+
             result
         } catch (e: Exception) {
             Log.w(TAG, "Cache load failed — returning empty: ${e.message}")
