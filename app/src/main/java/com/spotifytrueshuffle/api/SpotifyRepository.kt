@@ -271,14 +271,17 @@ class SpotifyRepository(
             val totalGapArtists = allGapIds.size
 
             // 4a: Load cached entries — instant, no API calls.
+            // Only entries with scannedAtMs > 0 AND non-empty tracks are considered "loaded".
+            // Entries with empty tracks (e.g. from a previous market-filter bug) are skipped
+            // here so the unscannedIds filter can pick them up for retry in 4b.
             val nowMs = System.currentTimeMillis()
             var loadedFromCache = 0
             for (artistId in allGapIds) {
                 val entry = cachedEntries[artistId]
-                if (entry != null && entry.scannedAtMs > 0L) {
+                if (entry != null && entry.scannedAtMs > 0L && entry.tracks.isNotEmpty()) {
                     entry.tracks.forEach { addTrackForArtist(it, artistId) }
                     // Recalculate tier from current topArtistIds (top artist list changes over time)
-                    if (artistId !in topArtistIds && entry.tracks.isNotEmpty()) {
+                    if (artistId !in topArtistIds) {
                         discoveryArtistIds.add(artistId)
                     }
                     loadedFromCache++
@@ -287,10 +290,13 @@ class SpotifyRepository(
             Log.d(TAG, "Gap fill 4a: $loadedFromCache/${totalGapArtists} loaded from cache instantly")
 
             // 4b: Build the scan batch.
-            // Unscanned: gap artists not in cache at all, or with scannedAtMs == 0
+            // Unscanned: gap artists not in cache at all, scannedAtMs==0, OR cached but empty.
+            // The "cached but empty" case catches artists that were scanned when the album
+            // strategy had a market filter bug — those scans all came back empty and were saved
+            // with a valid timestamp, but should be retried now that the bug is fixed.
             val unscannedIds = allGapIds.filter { artistId ->
                 val entry = cachedEntries[artistId]
-                entry == null || entry.scannedAtMs == 0L
+                entry == null || entry.scannedAtMs == 0L || entry.tracks.isEmpty()
             }.shuffled()
 
             // Stale: in cache with a real timestamp, but older than rescanThresholdMs
@@ -325,53 +331,58 @@ class SpotifyRepository(
                                 // variety — not just the same 10 popularity-ranked hits every time.
                                 // On each rescan cycle different albums are selected, so the
                                 // cache rotates naturally.
-                                if (market != null) {
-                                    try {
-                                        val albumsPage = api.getArtistAlbums(
-                                            artistId = artistId,
-                                            includeGroups = "album,single",
-                                            limit = 20,
-                                            market = market
-                                        )
-                                        if (albumsPage.items.isNotEmpty()) {
-                                            // Shuffle so we pick different albums each rescan
-                                            val selectedAlbums = albumsPage.items.shuffled().take(2)
-                                            for (album in selectedAlbums) {
-                                                try {
-                                                    val tracksPage = api.getAlbumTracks(
-                                                        albumId = album.id,
-                                                        limit = 50,
-                                                        market = market
-                                                    )
-                                                    tracksPage.items
-                                                        .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
-                                                        .forEach { st ->
-                                                            found.add(Track(
-                                                                id = st.id,
-                                                                name = st.name,
-                                                                durationMs = st.durationMs,
-                                                                popularity = 0, // simplified track — no score
-                                                                uri = st.uri,
-                                                                artists = st.artists,
-                                                                album = AlbumSimple(
-                                                                    id = album.id,
-                                                                    name = album.name,
-                                                                    releaseDate = album.releaseDate,
-                                                                    images = album.images
-                                                                ),
-                                                                previewUrl = st.previewUrl
-                                                            ))
-                                                        }
-                                                } catch (e: retrofit2.HttpException) {
-                                                    Log.w(TAG, "getAlbumTracks(${album.id}) ${e.code()} — skipping album")
-                                                }
+                                //
+                                // NOTE: getArtistAlbums is called WITHOUT a market filter so we
+                                // see all of the artist's releases globally. Passing market here
+                                // filters to albums licensed in that country — many niche artists
+                                // have zero albums available in some markets, making every scan
+                                // return empty. Market is still passed to getAlbumTracks below
+                                // so only tracks that are actually playable are added to the pool.
+                                try {
+                                    val albumsPage = api.getArtistAlbums(
+                                        artistId = artistId,
+                                        includeGroups = "album,single",
+                                        limit = 20
+                                        // no market — fetch all global releases
+                                    )
+                                    if (albumsPage.items.isNotEmpty()) {
+                                        // Shuffle so we pick different albums each rescan
+                                        val selectedAlbums = albumsPage.items.shuffled().take(2)
+                                        for (album in selectedAlbums) {
+                                            try {
+                                                val tracksPage = api.getAlbumTracks(
+                                                    albumId = album.id,
+                                                    limit = 50,
+                                                    market = market  // playback filter — only tracks listenable in user's market
+                                                )
+                                                tracksPage.items
+                                                    .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                                                    .forEach { st ->
+                                                        found.add(Track(
+                                                            id = st.id,
+                                                            name = st.name,
+                                                            durationMs = st.durationMs,
+                                                            popularity = 0, // simplified track — no score
+                                                            uri = st.uri,
+                                                            artists = st.artists,
+                                                            album = AlbumSimple(
+                                                                id = album.id,
+                                                                name = album.name,
+                                                                releaseDate = album.releaseDate,
+                                                                images = album.images
+                                                            ),
+                                                            previewUrl = st.previewUrl
+                                                        ))
+                                                    }
+                                            } catch (e: retrofit2.HttpException) {
+                                                Log.w(TAG, "getAlbumTracks(${album.id}) ${e.code()} — skipping album")
                                             }
                                         }
-                                    } catch (e: retrofit2.HttpException) {
-                                        when (e.code()) {
-                                            429  -> return@withPermit found  // rate limit — bail immediately
-                                            else -> Log.w(TAG, "getArtistAlbums($artistId) ${e.code()} — falling back")
-                                        }
+                                    }
+                                } catch (e: retrofit2.HttpException) {
+                                    when (e.code()) {
+                                        429  -> return@withPermit found  // rate limit — bail immediately
+                                        else -> Log.w(TAG, "getArtistAlbums($artistId) ${e.code()} — falling back")
                                     }
                                 }
 
