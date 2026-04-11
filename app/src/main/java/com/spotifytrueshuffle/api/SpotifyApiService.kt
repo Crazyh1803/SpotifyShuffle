@@ -89,7 +89,7 @@ interface SpotifyApiService {
     suspend fun searchTracks(
         @Query("q") query: String,
         @Query("type") type: String = "track",
-        @Query("market") market: String,
+        @Query("market") market: String? = null,
         @Query("limit") limit: Int = 10
     ): SearchTracksResponse
 

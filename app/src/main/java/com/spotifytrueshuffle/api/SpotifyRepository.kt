@@ -409,6 +409,7 @@ class SpotifyRepository(
                                         try {
                                             val results = api.searchTracks(
                                                 query = "artist:\"$name\"",
+                                                market = null,
                                                 limit = 10
                                             ).tracks.items
                                             val byId = results.filter { t -> t.artists.any { it.id == artistId } }
