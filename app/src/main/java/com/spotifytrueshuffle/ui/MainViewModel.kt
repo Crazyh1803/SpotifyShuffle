@@ -470,7 +470,15 @@ class MainViewModel(
                     topArtistIds = topArtistIds,
                     market = user.country,
                     cachedEntries = cachedEntries,
-                    rescanThresholdMs = rescanThresholdMs
+                    rescanThresholdMs = rescanThresholdMs,
+                    onScanProgress = { artistName, scanned, total ->
+                        // Update the building message with the current artist name so the
+                        // user can see it scanning — matches the behaviour from earlier versions.
+                        _uiState.value = UiState.Building(
+                            "Scanning $artistName… ($scanned of $total)",
+                            3, 4
+                        )
+                    }
                 )
 
                 // Persist newly scanned entries (merged with existing cache)
@@ -550,12 +558,17 @@ class MainViewModel(
                 historyStorage.recordPlaylist(playlistTrackIds, playlistArtistIds, history.cooldownPlaylists)
 
                 // Count tier membership for the success screen breakdown.
-                // Each track is attributed to its primary artist (first in list).
+                // We check ALL of a track's artists (not just the first) because gap-fill
+                // tracks fetched from albums sometimes list a featured artist as primary —
+                // using firstOrNull() alone caused discovery tracks to be miscounted as Tier B.
+                // Priority: C > A > B (a track featuring both a top and a discovery artist
+                // is a discovery win and should be credited as such).
                 val tierCCount = tracks.count { track ->
-                    track.artists.firstOrNull()?.id in trackPool.discoveryArtistIds
+                    track.artists.any { it.id in trackPool.discoveryArtistIds }
                 }
                 val tierACount = tracks.count { track ->
-                    track.artists.firstOrNull()?.id in topArtistIds
+                    track.artists.none { it.id in trackPool.discoveryArtistIds } &&
+                    track.artists.any { it.id in topArtistIds }
                 }
                 val tierBCount = tracks.size - tierCCount - tierACount
 

@@ -50,12 +50,32 @@ class GapArtistCache(context: Context) {
     /**
      * Loads all cached entries from disk.
      * Returns an empty map if the file does not exist or is corrupt.
+     *
+     * Corruption check: earlier release builds ran R8 without proper ProGuard keep rules,
+     * which renamed Track fields before Gson serialized them. Those JSON files have the
+     * outer Map<String, GapArtistEntry> structure intact but Track objects inside have
+     * empty id/uri strings. We detect this and wipe the file so a fresh rescan runs —
+     * discovery artists were completely broken by this because their tracks had no valid URIs.
      */
     fun load(): Map<String, GapArtistEntry> {
         if (!file.exists()) return emptyMap()
         return try {
             val type = object : TypeToken<Map<String, GapArtistEntry>>() {}.type
-            gson.fromJson<Map<String, GapArtistEntry>>(file.readText(), type) ?: emptyMap()
+            val result = gson.fromJson<Map<String, GapArtistEntry>>(file.readText(), type)
+                ?: emptyMap()
+
+            // Detect R8-corrupted track data: entries that have tracks but ALL tracks have
+            // empty IDs (meaning R8 renamed the "id" field and Gson read back empty strings).
+            val corrupted = result.values.any { entry ->
+                entry.tracks.isNotEmpty() && entry.tracks.all { it.id.isEmpty() }
+            }
+            if (corrupted) {
+                Log.w(TAG, "Cache contains R8-corrupted track data — wiping for fresh rescan")
+                file.delete()
+                return emptyMap()
+            }
+
+            result
         } catch (e: Exception) {
             Log.w(TAG, "Cache load failed — returning empty: ${e.message}")
             emptyMap()

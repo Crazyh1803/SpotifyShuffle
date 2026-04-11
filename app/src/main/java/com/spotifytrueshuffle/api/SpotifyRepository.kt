@@ -174,7 +174,9 @@ class SpotifyRepository(
         market: String? = null,
         cachedEntries: Map<String, GapArtistEntry> = emptyMap(),
         batchSize: Int = BATCH_SIZE,
-        rescanThresholdMs: Long = Long.MAX_VALUE
+        rescanThresholdMs: Long = Long.MAX_VALUE,
+        /** Called each time a new artist scan starts — artist name, artists scanned so far, total to scan. */
+        onScanProgress: ((artistName: String, scanned: Int, total: Int) -> Unit)? = null
     ): TrackPoolBuildResult {
         ensureValidToken()
         val followedArtistIds = followedArtists.map { it.id }
@@ -313,6 +315,8 @@ class SpotifyRepository(
                             // with 100 requests simultaneously. Effective rate ≈ 2 req/sec.
                             delay(index * 100L)
                             semaphore.withPermit {
+                                val artistName = artistNameById[artistId] ?: artistId
+                                onScanProgress?.invoke(artistName, index + 1, toScan.size)
                                 val found = mutableListOf<Track>()
 
                                 // ── Strategy 1: album-based (preferred) ─────────────────────
