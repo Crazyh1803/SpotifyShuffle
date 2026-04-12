@@ -693,6 +693,11 @@ class MainViewModel(
             )
         }
 
+        // ── Follow (save) the playlist so it appears in the user's library ────
+        // Spotify no longer auto-saves API-created playlists. PUT /playlists/{id}/followers
+        // replicates the user tapping "Save" — non-fatal if it fails.
+        repository.followPlaylist(playlist.id)
+
         return playlist.externalUrls?.spotify ?: "https://open.spotify.com/playlist/${playlist.id}"
     }
 

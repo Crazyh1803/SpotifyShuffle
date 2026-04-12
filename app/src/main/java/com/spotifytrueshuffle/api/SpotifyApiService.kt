@@ -163,4 +163,16 @@ interface SpotifyApiService {
         @Path("playlistId") playlistId: String,
         @Body body: TracksBody
     ): Response<SnapshotResponse>
+
+    /**
+     * Follows (saves to library) a playlist — equivalent to the user tapping "Save" in Spotify.
+     * Call this after creating a new playlist so it automatically appears in the user's library.
+     * [public] controls whether the follow is visible on the user's profile (false = private follow).
+     * Returns HTTP 200 on success.
+     */
+    @PUT("playlists/{playlistId}/followers")
+    suspend fun followPlaylist(
+        @Path("playlistId") playlistId: String,
+        @Body body: Map<String, Boolean>
+    ): Response<Unit>
 }

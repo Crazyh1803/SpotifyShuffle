@@ -556,6 +556,30 @@ class SpotifyRepository(
     }
 
     /**
+     * Follows (saves to library) a newly created playlist so it appears in the user's
+     * Spotify library without requiring them to tap "Save" manually.
+     * A non-fatal no-op on failure — the playlist still exists and works; it just
+     * won't be pinned until the user saves it themselves.
+     */
+    suspend fun followPlaylist(playlistId: String) {
+        ensureValidToken()
+        try {
+            val response = api.followPlaylist(
+                playlistId = playlistId,
+                body = mapOf("public" to false)
+            )
+            if (response.isSuccessful) {
+                Log.d(TAG, "followPlaylist succeeded for $playlistId")
+            } else {
+                Log.w(TAG, "followPlaylist ${response.code()} for $playlistId — playlist still created, user can save manually")
+            }
+        } catch (e: Exception) {
+            // Non-fatal: the playlist exists and works; it just won't auto-appear in the library.
+            Log.w(TAG, "followPlaylist exception for $playlistId: ${e.message}")
+        }
+    }
+
+    /**
      * Appends tracks to a playlist via POST /playlists/{id}/tracks.
      * Used as a fallback when PUT (replacePlaylistTracks) is blocked (403).
      * Returns true on success, throws SpotifyApiError on error.
