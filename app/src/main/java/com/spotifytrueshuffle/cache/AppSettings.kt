@@ -35,7 +35,14 @@ data class AppSettings(
     val lastScanScanned: Int = -1,
     val lastScanTotal: Int = -1,
     /** Per-strategy breakdown from the most recent gap-fill scan. Empty if no scan has run. */
-    val lastScanLog: String = ""
+    val lastScanLog: String = "",
+    /**
+     * Only relevant when the user has zero followed artists (liked-songs-only mode).
+     * false (default) = Strict: shuffle only the exact songs the user has liked.
+     * true = Explore: also include top tracks and saved albums from those artists.
+     * Has no effect for users who follow artists — their flow is unchanged.
+     */
+    val likedSongsExploreMode: Boolean = false
 )
 
 /** Reads and writes [AppSettings] to/from internal app storage via Gson. */
@@ -95,5 +102,9 @@ class AppSettingsStorage(context: Context) {
 
     fun saveLastScanLog(log: String) {
         save(load().copy(lastScanLog = log))
+    }
+
+    fun saveLikedSongsExploreMode(enabled: Boolean) {
+        save(load().copy(likedSongsExploreMode = enabled))
     }
 }

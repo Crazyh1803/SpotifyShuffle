@@ -54,14 +54,16 @@ fun SettingsSheet(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
-    val cooldownCount          by viewModel.cooldownCount.collectAsState()
+    val cooldownCount           by viewModel.cooldownCount.collectAsState()
     val artistCooldownPlaylists by viewModel.artistCooldownPlaylists.collectAsState()
-    val discoveryBias          by viewModel.discoveryBias.collectAsState()
-    val playlistDurationMs     by viewModel.playlistDurationMs.collectAsState()
-    val autoRebuildDays        by viewModel.autoRebuildDays.collectAsState()
-    val rescanDays             by viewModel.trackRescanIntervalDays.collectAsState()
-    val context                = LocalContext.current
-    val scope                  = rememberCoroutineScope()
+    val discoveryBias           by viewModel.discoveryBias.collectAsState()
+    val playlistDurationMs      by viewModel.playlistDurationMs.collectAsState()
+    val autoRebuildDays         by viewModel.autoRebuildDays.collectAsState()
+    val rescanDays              by viewModel.trackRescanIntervalDays.collectAsState()
+    val isLikedSongsOnlyMode    by viewModel.isLikedSongsOnlyMode.collectAsState()
+    val likedSongsExploreMode   by viewModel.likedSongsExploreMode.collectAsState()
+    val context                 = LocalContext.current
+    val scope                   = rememberCoroutineScope()
 
     // Request POST_NOTIFICATIONS permission when auto-rebuild is first enabled (Android 13+)
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -198,6 +200,70 @@ fun SettingsSheet(
                         ) {
                             Text(label, fontSize = 11.sp)
                         }
+                    }
+                }
+            }
+
+            // ── Liked Songs Shuffle (only shown when no followed artists) ─────
+            if (isLikedSongsOnlyMode) {
+                SettingSection(title = "Liked songs shuffle") {
+                    Text(
+                        text = "You have no followed artists. True Shuffle will distribute " +
+                            "your liked songs evenly across all your artists.",
+                        color = SpotifyLightGray,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    // Strict mode row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Liked songs only",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Only plays songs you've liked",
+                                color = SpotifyLightGray.copy(alpha = 0.7f),
+                                fontSize = 12.sp
+                            )
+                        }
+                        RadioButton(
+                            selected = !likedSongsExploreMode,
+                            onClick = { viewModel.setLikedSongsExploreMode(false) },
+                            colors = RadioButtonDefaults.colors(selectedColor = SpotifyGreen)
+                        )
+                    }
+                    // Explore mode row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Explore artist catalogs",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Also includes top tracks & saved albums",
+                                color = SpotifyLightGray.copy(alpha = 0.7f),
+                                fontSize = 12.sp
+                            )
+                        }
+                        RadioButton(
+                            selected = likedSongsExploreMode,
+                            onClick = { viewModel.setLikedSongsExploreMode(true) },
+                            colors = RadioButtonDefaults.colors(selectedColor = SpotifyGreen)
+                        )
                     }
                 }
             }

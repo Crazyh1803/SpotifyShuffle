@@ -128,6 +128,19 @@ class MainViewModel(
     private val _artistCooldownPlaylists = MutableStateFlow(appSettings.load().artistCooldownPlaylists)
     val artistCooldownPlaylists: StateFlow<Int> = _artistCooldownPlaylists.asStateFlow()
 
+    /**
+     * Only meaningful when the user has no followed artists (liked-songs-only mode).
+     * false = Strict: only play the exact songs the user has liked.
+     * true  = Explore: also include top tracks and saved albums from those artists.
+     * Has no effect for followed-artist users.
+     */
+    private val _likedSongsExploreMode = MutableStateFlow(appSettings.load().likedSongsExploreMode)
+    val likedSongsExploreMode: StateFlow<Boolean> = _likedSongsExploreMode.asStateFlow()
+
+    /** Whether the current user has zero followed artists (liked-songs-only mode). */
+    private val _isLikedSongsOnlyMode = MutableStateFlow(false)
+    val isLikedSongsOnlyMode: StateFlow<Boolean> = _isLikedSongsOnlyMode.asStateFlow()
+
     init {
         val settings = appSettings.load()
         _uiState.value = when {
@@ -211,6 +224,12 @@ class MainViewModel(
         val clamped = n.coerceIn(1, 20)
         _artistCooldownPlaylists.value = clamped
         appSettings.saveArtistCooldownPlaylists(clamped)
+    }
+
+    /** Toggles liked-songs explore mode (only relevant for users with no followed artists). */
+    fun setLikedSongsExploreMode(enabled: Boolean) {
+        _likedSongsExploreMode.value = enabled
+        appSettings.saveLikedSongsExploreMode(enabled)
     }
 
     /**
@@ -450,12 +469,12 @@ class MainViewModel(
                     Log.d(TAG, "Using cached library: ${library.followedArtists.size} artists")
                 }
 
-                if (library.followedArtists.isEmpty()) {
-                    _uiState.value = UiState.Error(
-                        "You're not following any artists on Spotify yet.\n" +
-                        "Follow some artists and try again!"
-                    )
-                    return@launch
+                // Determine mode: users with no followed artists get liked-songs shuffle instead.
+                // Followed-artist users continue exactly as before — no change to their flow.
+                val likedSongsOnlyMode = library.followedArtists.isEmpty()
+                _isLikedSongsOnlyMode.value = likedSongsOnlyMode
+                if (likedSongsOnlyMode) {
+                    Log.d(TAG, "No followed artists — entering liked-songs-only shuffle mode")
                 }
 
                 // Step 3 — build track pool (library sources + incremental gap-artist cache)
@@ -513,10 +532,53 @@ class MainViewModel(
                     "${trackPool.likedTrackIds.size} liked track IDs, " +
                     "${buildResult.newlyScanned.size} newly scanned)")
 
-                if (tracksByArtist.isEmpty()) {
+                // ── Liked-songs-only mode: derive artist list + optionally restrict pool ──────
+                // For followed-artist users: effectiveFollowedArtists = library.followedArtists,
+                // effectiveTracksByArtist = full pool. Zero changes to their flow.
+                val effectiveFollowedArtists: List<com.spotifytrueshuffle.api.Artist>
+                val effectiveTracksByArtist: Map<String, List<com.spotifytrueshuffle.api.Track>>
+
+                if (!likedSongsOnlyMode) {
+                    // Normal followed-artist flow — unchanged
+                    effectiveFollowedArtists = library.followedArtists
+                    effectiveTracksByArtist = tracksByArtist
+                } else {
+                    // Synthesize Artist objects from the primary artists of liked songs.
+                    // The engine only needs id (for tier classification) and name (for logging).
+                    effectiveFollowedArtists = trackPool.tracksByArtist
+                        .flatMap { (artistId, tracks) ->
+                            tracks.flatMap { it.artists }.filter { it.id == artistId }
+                        }
+                        .distinctBy { it.id }
+                        .map { simple ->
+                            com.spotifytrueshuffle.api.Artist(
+                                id = simple.id,
+                                name = simple.name,
+                                popularity = 0,
+                                genres = null,
+                                images = null
+                            )
+                        }
+
+                    // Strict mode (default): restrict pool to only the songs the user has liked.
+                    // Explore mode: use the full pool (top tracks + liked + saved albums).
+                    effectiveTracksByArtist = if (!_likedSongsExploreMode.value) {
+                        val likedIds = trackPool.likedTrackIds
+                        trackPool.tracksByArtist
+                            .mapValues { (_, tracks) -> tracks.filter { it.id in likedIds } }
+                            .filter { (_, tracks) -> tracks.isNotEmpty() }
+                    } else {
+                        trackPool.tracksByArtist
+                    }
+                    Log.d(TAG, "Liked-songs mode: ${effectiveFollowedArtists.size} artists, " +
+                        "${effectiveTracksByArtist.values.sumOf { it.size }} tracks " +
+                        "(explore=${_likedSongsExploreMode.value})")
+                }
+
+                if (effectiveTracksByArtist.isEmpty()) {
                     _uiState.value = UiState.Error(
                         "No tracks found in your Spotify library.\n\n" +
-                        "Save some songs in Spotify, then tap Try Again."
+                        "Like some songs or save some albums in Spotify, then tap Try Again."
                     )
                     return@launch
                 }
@@ -537,9 +599,9 @@ class MainViewModel(
                 Log.d(TAG, "Building with discoveryBias=$currentBias, durationMs=$currentDurationMs")
 
                 val playlistResult = shuffleEngine.buildPlaylist(
-                    followedArtists = library.followedArtists,
+                    followedArtists = effectiveFollowedArtists,
                     topArtistIds = topArtistIds,
-                    tracksByArtist = tracksByArtist,
+                    tracksByArtist = effectiveTracksByArtist,
                     discoveryArtistIds = trackPool.discoveryArtistIds,
                     likedTrackIds = trackPool.likedTrackIds,
                     cooldownTrackIds = cooldown.first,
@@ -551,8 +613,12 @@ class MainViewModel(
 
                 if (tracks.isEmpty()) {
                     _uiState.value = UiState.Error(
-                        "None of your followed artists had tracks in your library.\n\n" +
-                        "Save songs from artists you follow, then tap Try Again."
+                        if (likedSongsOnlyMode)
+                            "No liked songs could be shuffled.\n\n" +
+                            "Like some songs in Spotify, then tap Try Again."
+                        else
+                            "None of your followed artists had tracks in your library.\n\n" +
+                            "Save songs from artists you follow, then tap Try Again."
                     )
                     return@launch
                 }
