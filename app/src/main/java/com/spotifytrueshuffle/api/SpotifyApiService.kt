@@ -174,5 +174,5 @@ interface SpotifyApiService {
     suspend fun followPlaylist(
         @Path("playlistId") playlistId: String,
         @Body body: Map<String, Boolean>
-    ): Response<Unit>
+    ): Response<Void>
 }

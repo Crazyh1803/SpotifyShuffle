@@ -651,6 +651,9 @@ class MainViewModel(
             val updated = repository.replacePlaylistTracks(existingId, uris)
             if (updated) {
                 Log.d(TAG, "Playlist $existingId updated")
+                // Re-follow every time — idempotent if already saved, fixes the case where the
+                // playlist exists but was never pinned to the library (Spotify behaviour change).
+                repository.followPlaylist(existingId)
                 return "https://open.spotify.com/playlist/$existingId"
             }
             Log.w(TAG, "Stored playlist $existingId returned 404/403 — creating a new one")

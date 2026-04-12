@@ -571,7 +571,8 @@ class SpotifyRepository(
             if (response.isSuccessful) {
                 Log.d(TAG, "followPlaylist succeeded for $playlistId")
             } else {
-                Log.w(TAG, "followPlaylist ${response.code()} for $playlistId — playlist still created, user can save manually")
+                val body = try { response.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
+                Log.w(TAG, "followPlaylist ${response.code()} for $playlistId — body=$body")
             }
         } catch (e: Exception) {
             // Non-fatal: the playlist exists and works; it just won't auto-appear in the library.
