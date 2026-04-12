@@ -12,7 +12,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -44,6 +47,7 @@ fun SetupScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val clipboardManager = LocalClipboardManager.current
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
 
     fun validate(): Boolean {
         val trimmed = clientId.trim()
@@ -93,6 +97,29 @@ fun SetupScreen(
         )
 
         Spacer(Modifier.height(28.dp))
+
+        // ── Developer Dashboard link ─────────────────────────────────────────
+
+        Button(
+            onClick = {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://developer.spotify.com/dashboard"))
+                )
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(26.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen)
+        ) {
+            Text(
+                "Open Spotify Developer Dashboard ↗",
+                color = SpotifyBlack,
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
 
         // ── Step-by-step guide button ────────────────────────────────────────
 

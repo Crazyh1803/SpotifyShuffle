@@ -1,5 +1,8 @@
 package com.spotifytrueshuffle.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,7 +47,22 @@ fun WalkthroughScreen(onBack: () -> Unit) {
         AndroidView(
             factory = { context ->
                 WebView(context).apply {
-                    webViewClient = WebViewClient()
+                    webViewClient = object : WebViewClient() {
+                        // Open any http/https link in the user's default browser so the
+                        // in-app WebView doesn't try to load external pages (which spin
+                        // forever because the Spotify dashboard requires cookies/auth).
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView,
+                            request: WebResourceRequest
+                        ): Boolean {
+                            val url = request.url.toString()
+                            if (url.startsWith("http://") || url.startsWith("https://")) {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                return true
+                            }
+                            return false
+                        }
+                    }
                     settings.javaScriptEnabled = false
                     settings.loadWithOverviewMode = true
                     settings.useWideViewPort = true
