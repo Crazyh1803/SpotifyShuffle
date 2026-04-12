@@ -315,92 +315,88 @@ class SpotifyRepository(
             var scanLog = ""  // populated below when toScan is non-empty
 
             if (toScan.isNotEmpty()) {
-                val topTracksBlocked = AtomicBoolean(false)
-                val semaphore = Semaphore(2)   // 2 concurrent — keeps burst rate well under Spotify's limit
+                val albumsBlocked   = AtomicBoolean(false) // set on first 429 from getArtistAlbums
+                val topTracksBlocked = AtomicBoolean(false) // set on first 403 from getArtistTopTracks
+                val searchBlocked   = AtomicBoolean(false) // set on first 429 from searchTracks
+                val semaphore = Semaphore(1)   // 1 concurrent — conservative to stay well under rate limits
 
                 val s1Found  = AtomicInteger(0)  // artists resolved via Strategy 1 (albums)
                 val s2Found  = AtomicInteger(0)  // artists resolved via Strategy 2 (top-tracks)
                 val s3Found  = AtomicInteger(0)  // artists resolved via Strategy 3 (search)
-                val sFailed  = AtomicInteger(0)  // artists that returned empty from all strategies
+                val s429     = AtomicInteger(0)  // artists that hit a rate limit on every strategy
+                val sFailed  = AtomicInteger(0)  // artists that returned empty (no rate limit)
 
                 val scanResults: List<List<Track>> = coroutineScope {
                     toScan.mapIndexed { index, artistId ->
                         async {
-                            // Stagger launch: spread starts 100ms apart so we don't slam the API
-                            // with 100 requests simultaneously. Effective rate ≈ 2 req/sec.
-                            delay(index * 100L)
+                            // Stagger launch: 300ms apart → max ~3 req/sec well under Spotify's limit.
+                            delay(index * 300L)
                             semaphore.withPermit {
                                 val artistName = artistNameById[artistId] ?: artistId
                                 onScanProgress?.invoke(artistName, index + 1, toScan.size)
                                 val found = mutableListOf<Track>()
-                                var foundBy = 0  // 0=none, 1=albums, 2=topTracks, 3=search
+                                var foundBy = 0   // 0=none, 1=albums, 2=topTracks, 3=search
+                                var rateLimited = false
 
                                 // ── Strategy 1: album-based (preferred) ─────────────────────
-                                // Fetches up to 50 of the artist's releases (albums, singles,
-                                // AND appears_on) with no market filter so we see everything
-                                // globally. We iterate through all returned albums in random
-                                // order, stopping as soon as we have at least 5 tracks.
-                                //
-                                // No market on getAlbumTracks either — Spotify handles
-                                // playability at playback time, same as Source 3 (saved albums).
-                                // Passing market here caused every scan to return [] for
-                                // region-restricted albums, which was the root cause of all
-                                // 145 gap-artist entries being empty.
-                                try {
-                                    val albumsPage = api.getArtistAlbums(
-                                        artistId = artistId,
-                                        includeGroups = "album,single,appears_on",
-                                        limit = 50
-                                    )
-                                    for (album in albumsPage.items.shuffled()) {
-                                        if (found.size >= 5) break   // enough variety — stop here
-                                        try {
-                                            val tracksPage = api.getAlbumTracks(
-                                                albumId = album.id,
-                                                limit = 50
-                                            )
-                                            tracksPage.items
-                                                .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
-                                                .forEach { st ->
-                                                    found.add(Track(
-                                                        id = st.id,
-                                                        name = st.name,
-                                                        durationMs = st.durationMs,
-                                                        popularity = 0,
-                                                        uri = st.uri,
-                                                        artists = st.artists,
-                                                        album = AlbumSimple(
-                                                            id = album.id,
-                                                            name = album.name,
-                                                            releaseDate = album.releaseDate,
-                                                            images = album.images
-                                                        ),
-                                                        previewUrl = st.previewUrl
-                                                    ))
-                                                }
-                                        } catch (e: retrofit2.HttpException) {
-                                            Log.w(TAG, "getAlbumTracks(${album.id}) ${e.code()} — skipping")
+                                // No market filter on either call — Spotify handles playability
+                                // at playback time. includes appears_on so artists who only
+                                // feature on other people's releases still yield tracks.
+                                // On 429 we set albumsBlocked so the rest of the batch skips
+                                // straight to Strategy 3 rather than hammering a blocked endpoint.
+                                if (!albumsBlocked.get()) {
+                                    try {
+                                        val albumsPage = api.getArtistAlbums(
+                                            artistId = artistId,
+                                            includeGroups = "album,single,appears_on",
+                                            limit = 50
+                                        )
+                                        for (album in albumsPage.items.shuffled()) {
+                                            if (found.size >= 5) break
+                                            try {
+                                                val tracksPage = api.getAlbumTracks(
+                                                    albumId = album.id,
+                                                    limit = 50
+                                                )
+                                                tracksPage.items
+                                                    .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                                                    .forEach { st ->
+                                                        found.add(Track(
+                                                            id = st.id,
+                                                            name = st.name,
+                                                            durationMs = st.durationMs,
+                                                            popularity = 0,
+                                                            uri = st.uri,
+                                                            artists = st.artists,
+                                                            album = AlbumSimple(
+                                                                id = album.id,
+                                                                name = album.name,
+                                                                releaseDate = album.releaseDate,
+                                                                images = album.images
+                                                            ),
+                                                            previewUrl = st.previewUrl
+                                                        ))
+                                                    }
+                                            } catch (e: retrofit2.HttpException) {
+                                                Log.w(TAG, "getAlbumTracks(${album.id}) ${e.code()} — skipping")
+                                            }
                                         }
-                                    }
-                                } catch (e: retrofit2.HttpException) {
-                                    when (e.code()) {
-                                        429  -> return@withPermit found
-                                        else -> Log.w(TAG, "getArtistAlbums($artistId) ${e.code()} — falling back")
+                                    } catch (e: retrofit2.HttpException) {
+                                        when (e.code()) {
+                                            429  -> { albumsBlocked.set(true); rateLimited = true }
+                                            else -> Log.w(TAG, "getArtistAlbums($artistId) ${e.code()} — falling back")
+                                        }
                                     }
                                 }
                                 if (found.isNotEmpty()) foundBy = 1
 
                                 // ── Strategy 2: top-tracks ───────────────────────────────────
-                                // Falls back here when Strategy 1 found nothing. Blocked (403)
-                                // for apps without Spotify quota extension, but we still try
-                                // in case the user's app has it. The AtomicBoolean skips all
-                                // subsequent artists after the first 403 to avoid hammering.
                                 if (found.isEmpty() && !topTracksBlocked.get()) {
                                     try {
                                         found.addAll(api.getArtistTopTracks(artistId, market = null).tracks)
                                     } catch (e: retrofit2.HttpException) {
                                         when (e.code()) {
-                                            429  -> return@withPermit found
+                                            429  -> rateLimited = true
                                             403  -> topTracksBlocked.set(true)
                                             else -> Log.w(TAG, "getArtistTopTracks($artistId) ${e.code()}")
                                         }
@@ -409,13 +405,9 @@ class SpotifyRepository(
                                 if (found.isNotEmpty() && foundBy == 0) foundBy = 2
 
                                 // ── Strategy 3: search ───────────────────────────────────────
-                                // Last resort. No market required — search is a catalog endpoint
-                                // that works regardless of the user's country setting.
-                                // We prefer tracks where the artist ID matches; if the strict
-                                // filter returns nothing (e.g. name collision or ID mismatch),
-                                // we fall back to using the raw search results so we always
-                                // surface SOMETHING rather than leaving the artist pool empty.
-                                if (found.isEmpty()) {
+                                // No market required. Prefer tracks matching by artist ID;
+                                // fall back to raw results so we always surface something.
+                                if (found.isEmpty() && !searchBlocked.get()) {
                                     val name = artistNameById[artistId]
                                     if (name != null) {
                                         try {
@@ -428,7 +420,10 @@ class SpotifyRepository(
                                             val byId = results.filter { t -> t.artists.any { it.id == artistId } }
                                             found.addAll(byId.ifEmpty { results })
                                         } catch (e: retrofit2.HttpException) {
-                                            Log.w(TAG, "searchTracks($artistId) ${e.code()} — skipping")
+                                            when (e.code()) {
+                                                429  -> { searchBlocked.set(true); rateLimited = true }
+                                                else -> Log.w(TAG, "searchTracks($artistId) ${e.code()} — skipping")
+                                            }
                                         }
                                     }
                                 }
@@ -439,7 +434,8 @@ class SpotifyRepository(
                                     1    -> s1Found.incrementAndGet()
                                     2    -> s2Found.incrementAndGet()
                                     3    -> s3Found.incrementAndGet()
-                                    else -> sFailed.incrementAndGet()
+                                    else -> if (rateLimited) s429.incrementAndGet()
+                                            else sFailed.incrementAndGet()
                                 }
 
                                 found
@@ -448,7 +444,7 @@ class SpotifyRepository(
                     }.awaitAll()
                 }
 
-                scanLog = "Scanned ${toScan.size}: albums=$s1Found top=$s2Found search=$s3Found failed=$sFailed"
+                scanLog = "Scanned ${toScan.size}: albums=$s1Found top=$s2Found search=$s3Found rateLimit=$s429 failed=$sFailed"
                 Log.d(TAG, scanLog)
 
                 // Merge scan results into pool and build newlyScanned map.
