@@ -54,21 +54,22 @@ a:hover { text-decoration: underline; }
 }
 .screen.active { display: flex; }
 
-/* ── Logo ────────────────────────────────────────────────────────────────────── */
+/* ── Logo (setup screen) ─────────────────────────────────────────────────────── */
 .logo-area {
     text-align: center;
     margin-bottom: 32px;
     padding-top: 40px;
 }
 .logo-img {
-    width: 72px;
-    height: 72px;
-    margin-bottom: 12px;
+    width: 96px;
+    height: 96px;
+    margin-bottom: 14px;
     display: block;
     margin-left: auto;
     margin-right: auto;
-    /* Drop shadow so it pops on the dark background */
-    filter: drop-shadow(0 4px 12px rgba(255, 110, 0, 0.35));
+    /* The SVG has its own dark bg — a subtle glow ties it to the page */
+    filter: drop-shadow(0 6px 24px rgba(139, 92, 246, 0.45));
+    border-radius: 50%;
 }
 .logo-area h1 {
     font-size: 28px;
@@ -82,34 +83,34 @@ a:hover { text-decoration: underline; }
     margin-top: 4px;
 }
 
-/* Home screen header logo */
-.home-logo-icon {
-    width: 28px;
-    height: 28px;
-    flex-shrink: 0;
-}
-
-/* ── Buy Me a Coffee footer ──────────────────────────────────────────────────── */
+/* ── Buy Me a Coffee ─────────────────────────────────────────────────────────── */
 .bmc-footer {
     text-align: center;
-    padding: 20px 0 8px;
+    padding: 20px 0 12px;
     margin-top: auto;
 }
 .bmc-link {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    color: var(--text-dim);
-    font-size: 14px;
-    text-decoration: none;
-    padding: 8px 16px;
+    gap: 8px;
+    color: #C8A000;
+    background: transparent;
+    border: 1.5px solid rgba(200, 160, 0, 0.35);
+    padding: 10px 24px;
     border-radius: var(--radius-pill);
-    transition: color var(--transition), background var(--transition);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    text-decoration: none;
+    transition: color var(--transition), background var(--transition),
+                border-color var(--transition), transform var(--transition);
 }
 .bmc-link:hover {
-    color: var(--text-muted);
-    background: var(--surface-2);
+    color: #FFD700;
+    background: rgba(200, 160, 0, 0.1);
+    border-color: rgba(200, 160, 0, 0.7);
     text-decoration: none;
+    transform: translateY(-1px);
 }
 
 /* ── Cards ───────────────────────────────────────────────────────────────────── */
@@ -244,19 +245,35 @@ input[type="password"]:focus {
 #screen-home {
     position: relative;
 }
+
+/* Settings gear: absolute top-right */
+.home-settings-btn {
+    position: absolute;
+    top: 44px;
+    right: 0;
+    z-index: 1;
+}
+
+/* Centered logo lockup */
 .home-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding-top: 48px;
-    margin-bottom: 32px;
+    text-align: center;
+    padding-top: 44px;
+    margin-bottom: 16px;
+}
+.home-logo-img {
+    width: 120px;
+    height: 120px;
+    display: block;
+    margin: 0 auto 14px;
+    border-radius: 50%;
+    filter: drop-shadow(0 6px 28px rgba(139, 92, 246, 0.5));
 }
 .home-header h1 {
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 700;
-    flex: 1;
+    letter-spacing: -0.3px;
 }
+
 .icon-btn {
     background: none;
     border: none;
@@ -271,28 +288,23 @@ input[type="password"]:focus {
 .icon-btn:hover { color: var(--text); }
 
 .home-hero {
-    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
     text-align: center;
-    padding: 24px 0;
-}
-.home-hero .hero-icon {
-    font-size: 80px;
-    margin-bottom: 20px;
+    padding: 12px 0 20px;
 }
 .home-hero h2 {
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
     margin-bottom: 10px;
+    color: var(--text);
 }
 .home-hero p {
     color: var(--text-muted);
     font-size: 15px;
-    max-width: 320px;
-    margin: 0 auto 28px;
+    max-width: 300px;
+    margin: 0 auto;
     line-height: 1.6;
 }
 

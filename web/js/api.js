@@ -95,19 +95,21 @@ export async function getTopTracks(timeRange = 'long_term') {
 }
 
 export async function getArtistTopTracks(artistId) {
-    return apiFetch(`/artists/${artistId}/top-tracks`);
+    // market=from_token is required — Spotify returns 403 Forbidden without it.
+    // from_token derives the market from the user's access token automatically.
+    return apiFetch(`/artists/${artistId}/top-tracks?market=from_token`);
 }
 
 export async function getArtistAlbums(artistId, includeGroups = 'album,single', limit = 20) {
-    return apiFetch(`/artists/${artistId}/albums?include_groups=${includeGroups}&limit=${limit}`);
+    return apiFetch(`/artists/${artistId}/albums?include_groups=${includeGroups}&limit=${limit}&market=from_token`);
 }
 
 export async function getAlbumTracks(albumId, limit = 50) {
-    return apiFetch(`/albums/${albumId}/tracks?limit=${limit}`);
+    return apiFetch(`/albums/${albumId}/tracks?limit=${limit}&market=from_token`);
 }
 
 export async function searchTracks(query, limit = 10) {
-    return apiFetch(`/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}`);
+    return apiFetch(`/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}&market=from_token`);
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────
