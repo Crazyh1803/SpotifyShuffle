@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Background glow -->
+    <radialGradient id="bg" cx="256" cy="256" r="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0"   stop-color="#FF8C00" stop-opacity="0.35"/>
+      <stop offset="0.6" stop-color="#CC4400" stop-opacity="0.18"/>
+      <stop offset="1"   stop-color="#FF6B00" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Top arrow gradient (orange) -->
+    <linearGradient id="og" x1="108" y1="0" x2="404" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF6B00"/>
+      <stop offset="1" stop-color="#FF9E00"/>
+    </linearGradient>
+    <!-- Bottom arrow gradient (purple) -->
+    <linearGradient id="pg" x1="404" y1="0" x2="108" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BF5FFF"/>
+      <stop offset="1" stop-color="#7B2FFF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Subtle background glow -->
+  <circle cx="256" cy="256" r="90" fill="url(#bg)"/>
+
+  <!-- Top shuffle wave (orange, left → right) -->
+  <path d="M108,290 C108,290 140,290 160,270 C190,238 210,210 256,210 C302,210 322,238 352,270 C372,290 404,290 404,290"
+        fill="none" stroke="url(#og)" stroke-width="28"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Arrowhead right (orange) -->
+  <polygon points="388,268 420,290 388,312" fill="#FF9E00"/>
+
+  <!-- Bottom shuffle wave (purple, right → left) -->
+  <path d="M404,222 C404,222 372,222 352,242 C322,274 302,302 256,302 C210,302 190,274 160,242 C140,222 108,222 108,222"
+        fill="none" stroke="url(#pg)" stroke-width="28"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Arrowhead left (purple) -->
+  <polygon points="124,200 92,222 124,244" fill="#BF5FFF"/>
+
+  <!-- Center dot — white ring + gold core -->
+  <circle cx="256" cy="256" r="22" fill="white" fill-opacity="0.95"/>
+  <circle cx="256" cy="256" r="14" fill="#FFD580"/>
+</svg>

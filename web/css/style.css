@@ -60,10 +60,15 @@ a:hover { text-decoration: underline; }
     margin-bottom: 32px;
     padding-top: 40px;
 }
-.logo-area .logo-icon {
-    font-size: 52px;
-    margin-bottom: 8px;
+.logo-img {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 12px;
     display: block;
+    margin-left: auto;
+    margin-right: auto;
+    /* Drop shadow so it pops on the dark background */
+    filter: drop-shadow(0 4px 12px rgba(255, 110, 0, 0.35));
 }
 .logo-area h1 {
     font-size: 28px;
@@ -75,6 +80,36 @@ a:hover { text-decoration: underline; }
     color: var(--text-muted);
     font-size: 14px;
     margin-top: 4px;
+}
+
+/* Home screen header logo */
+.home-logo-icon {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+/* ── Buy Me a Coffee footer ──────────────────────────────────────────────────── */
+.bmc-footer {
+    text-align: center;
+    padding: 20px 0 8px;
+    margin-top: auto;
+}
+.bmc-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-dim);
+    font-size: 14px;
+    text-decoration: none;
+    padding: 8px 16px;
+    border-radius: var(--radius-pill);
+    transition: color var(--transition), background var(--transition);
+}
+.bmc-link:hover {
+    color: var(--text-muted);
+    background: var(--surface-2);
+    text-decoration: none;
 }
 
 /* ── Cards ───────────────────────────────────────────────────────────────────── */
@@ -213,12 +248,14 @@ input[type="password"]:focus {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
     padding-top: 48px;
     margin-bottom: 32px;
 }
 .home-header h1 {
     font-size: 24px;
     font-weight: 700;
+    flex: 1;
 }
 .icon-btn {
     background: none;

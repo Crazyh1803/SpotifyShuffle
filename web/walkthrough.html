@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>True Shuffle — Setup Guide</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+      background: #121212;
+      color: #e0e0e0;
+      padding: 20px 18px 48px;
+      line-height: 1.6;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #1db954;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 28px;
+      padding: 8px 0;
+    }
+    .back-link:hover { text-decoration: underline; }
+
+    h1 {
+      font-size: 22px;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: #a0a0a0;
+      margin-bottom: 32px;
+    }
+
+    .step {
+      margin-bottom: 36px;
+    }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .step-number {
+      background: #1db954;
+      color: #000;
+      font-weight: 700;
+      font-size: 13px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .step-title {
+      font-size: 17px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    .step-body {
+      font-size: 14px;
+      color: #c0c0c0;
+      margin-bottom: 12px;
+      padding-left: 40px;
+    }
+
+    .step img {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid #2a2a2a;
+      display: block;
+      margin-top: 4px;
+    }
+
+    .code-block {
+      background: #1e1e1e;
+      border: 1px solid #1db954;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+      font-size: 13px;
+      color: #1db954;
+      word-break: break-all;
+      margin: 10px 0 14px 40px;
+      cursor: pointer;
+      user-select: all;
+    }
+    .code-block:hover { border-color: #25e068; }
+
+    .copy-hint {
+      font-size: 11px;
+      color: #666;
+      margin: -10px 0 14px 40px;
+    }
+
+    .note {
+      background: #1a1a1a;
+      border-left: 3px solid #1db954;
+      padding: 10px 14px;
+      border-radius: 0 8px 8px 0;
+      font-size: 13px;
+      color: #a8a8a8;
+      margin: 10px 0 14px 40px;
+    }
+
+    .note strong { color: #e0e0e0; }
+
+    .link {
+      color: #1db954;
+      text-decoration: none;
+    }
+    .link:hover { text-decoration: underline; }
+
+    hr {
+      border: none;
+      border-top: 1px solid #2a2a2a;
+      margin: 36px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <a href="index.html" class="back-link">← Back to True Shuffle</a>
+
+  <h1>How to Get Your Spotify Client ID</h1>
+  <p class="subtitle">Complete these steps once — takes about 2 minutes.</p>
+
+  <!-- Step 1 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">1</div>
+      <div class="step-title">Open the Spotify Developer Dashboard</div>
+    </div>
+    <p class="step-body">
+      Go to <a class="link" href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a>
+      and log in with your Spotify account. Then tap <strong>Create app</strong> in the top-right corner.
+    </p>
+    <div class="note">
+      <strong>💡 Tip:</strong> If you can't see the <strong>Create app</strong> button,
+      try rotating your phone to <strong>landscape mode</strong> — the button can be
+      hidden off-screen in portrait on some devices.
+    </div>
+    <img src="walkthrough/step1.png" alt="Spotify Developer Dashboard showing the Create app button">
+  </div>
+
+  <!-- Step 2 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">2</div>
+      <div class="step-title">Fill in the Create App form</div>
+    </div>
+    <p class="step-body">
+      Enter any <strong>App name</strong> and <strong>Description</strong>
+      (e.g., "True Shuffle" and "A real shuffle of all my music").
+    </p>
+    <p class="step-body">
+      In the <strong>Redirect URIs</strong> field, enter the URL shown below exactly,
+      then tap <strong>Add</strong>:
+    </p>
+    <div class="code-block" id="redirect-uri-display" title="Click to copy">Loading…</div>
+    <p class="copy-hint">Tap to select · copy it into the Redirect URIs field</p>
+    <p class="step-body">
+      Under <em>Which API/SDKs are you planning to use?</em>, check <strong>Web API</strong>.
+      Accept the terms and tap <strong>Save</strong>.
+    </p>
+    <img src="walkthrough/step2.png" alt="Create app form with all fields filled in">
+  </div>
+
+  <!-- Step 3 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">3</div>
+      <div class="step-title">Copy your Client ID</div>
+    </div>
+    <p class="step-body">
+      After saving, you'll be taken to your app's <strong>Basic Information</strong> page.
+      Your <strong>Client ID</strong> is the 32-character code shown at the top.
+      Tap the copy icon next to it.
+    </p>
+    <img src="walkthrough/step3.png" alt="Basic Information page showing the Client ID highlighted">
+    <div class="note">
+      <strong>Note:</strong> You do <em>not</em> need the Client Secret.
+      True Shuffle uses a secure PKCE flow that only requires the Client ID —
+      your credentials never leave your device.
+    </div>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">4</div>
+      <div class="step-title">Paste it into True Shuffle</div>
+    </div>
+    <p class="step-body">
+      Go back to True Shuffle, paste your Client ID into the field, and tap
+      <strong>Save &amp; Continue</strong>. You'll only need to do this once.
+    </p>
+    <div class="note">
+      <strong>Your Client ID is stored only in this browser</strong> and is never sent
+      anywhere except directly to Spotify's servers when you log in.
+    </div>
+  </div>
+
+  <script type="module">
+    // Dynamically show the correct redirect URI for this deployment
+    import { getRedirectUri } from './js/auth.js';
+    const el = document.getElementById('redirect-uri-display');
+    if (el) {
+      const uri = getRedirectUri();
+      el.textContent = uri;
+      el.title = 'Click to copy';
+      el.addEventListener('click', () => {
+        navigator.clipboard?.writeText(uri).then(() => {
+          el.textContent = '✓ Copied!';
+          setTimeout(() => { el.textContent = uri; }, 2000);
+        });
+      });
+    }
+  </script>
+
+</body>
+</html>

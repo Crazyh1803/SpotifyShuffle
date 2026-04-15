@@ -7,6 +7,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>True Shuffle</title>
+    <!-- Favicon / browser tab icon (SVG — works in Chrome, Firefox, Edge; Safari falls back gracefully) -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <!-- Apple home-screen icon -->
+    <link rel="apple-touch-icon" href="favicon.svg">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -15,45 +19,56 @@
     <!-- ── Setup Screen ──────────────────────────────────────────────────── -->
     <section id="screen-setup" class="screen">
         <div class="logo-area">
-            <span class="logo-icon">🔀</span>
+            <!-- App logo (same SVG as the browser tab icon) -->
+            <img src="favicon.svg" alt="True Shuffle logo" class="logo-img">
             <h1>True Shuffle</h1>
             <p>Better shuffle for your Spotify library</p>
         </div>
 
         <div class="card">
+            <!-- Guide link at the TOP of the card -->
+            <a href="walkthrough.html" target="_blank" rel="noopener"
+               class="btn btn-secondary" style="margin-bottom: 16px;">
+                📖 Step-by-step setup guide
+            </a>
+
+            <div class="divider"></div>
+
             <div class="setup-steps">
-                <p style="margin-bottom: 12px;">To get started, you need a free Spotify Developer Client ID.
-                    It takes about 2 minutes to set up.</p>
+                <p style="margin-bottom: 12px;">You need a free Spotify Developer Client ID.
+                    It takes about 2 minutes — the guide above walks you through it.</p>
                 <ol>
                     <li>Open the Spotify Developer Dashboard</li>
                     <li>Create an app (any name, "Web API" type)</li>
-                    <li>Copy your <strong>Client ID</strong></li>
-                    <li>Add your redirect URI to the app settings</li>
+                    <li>Add your redirect URI &amp; copy your Client ID</li>
                 </ol>
             </div>
 
             <a href="https://developer.spotify.com/dashboard"
                target="_blank" rel="noopener"
-               class="btn btn-primary" style="margin-bottom: 16px;">
+               class="btn btn-primary" style="margin-top: 16px; margin-bottom: 16px;">
                 Open Spotify Developer Dashboard ↗
             </a>
 
             <div class="divider"></div>
 
-            <label for="input-client-id">Your Redirect URI <span style="font-weight:400;text-transform:none;letter-spacing:0;">(add this to your Spotify app)</span></label>
+            <label>Your Redirect URI <span style="font-weight:400;text-transform:none;letter-spacing:0;">(add this to your Spotify app)</span></label>
             <div class="redirect-uri-box" id="redirect-uri-display">Loading…</div>
-            <span class="redirect-uri-label">Copy this URL into Redirect URIs in your Spotify app settings, then save.</span>
+            <span class="redirect-uri-label">Copy this into Redirect URIs in your Spotify app settings, then save.</span>
 
             <label for="input-client-id" style="margin-top: 8px;">Client ID</label>
-            <input type="text" id="input-client-id" placeholder="e.g. 4a1b2c3d4e5f6a7b8c9d0e1f" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+            <input type="text" id="input-client-id" placeholder="e.g. 4a1b2c3d4e5f6a7b8c9d0e1f"
+                   autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 
             <button id="btn-save-client-id" class="btn btn-primary">
                 Save &amp; Continue
             </button>
+        </div>
 
-            <a href="walkthrough.html" target="_blank" rel="noopener"
-               class="btn btn-ghost btn-sm" style="margin-top: 8px;">
-                Step-by-step guide →
+        <!-- Buy Me a Coffee -->
+        <div class="bmc-footer">
+            <a href="https://www.buymeacoffee.com/AppsbyDan" target="_blank" rel="noopener" class="bmc-link">
+                🍺 Buy me a drink
             </a>
         </div>
     </section>
@@ -61,6 +76,7 @@
     <!-- ── Home Screen ────────────────────────────────────────────────────── -->
     <section id="screen-home" class="screen">
         <div class="home-header">
+            <img src="favicon.svg" alt="True Shuffle" class="home-logo-icon">
             <h1>True Shuffle</h1>
             <button class="icon-btn" id="btn-settings" aria-label="Settings">⚙️</button>
         </div>
@@ -68,7 +84,6 @@
         <!-- Logged-out state -->
         <div id="home-logged-out" style="display:none;">
             <div class="home-hero">
-                <div class="hero-icon">🎵</div>
                 <h2>Real shuffle.<br>No repeats. No bias.</h2>
                 <p>True Shuffle builds a playlist that spreads evenly across all your
                    artists — so your whole library actually gets played.</p>
@@ -84,7 +99,6 @@
         <!-- Logged-in state -->
         <div id="home-logged-in" style="display:none;">
             <div class="home-hero">
-                <div class="hero-icon">🔀</div>
                 <h2>Ready to shuffle</h2>
                 <p>Tap Build to create a fresh playlist that covers your entire
                    Spotify library — artists you love and artists you've forgotten.</p>
@@ -92,6 +106,13 @@
             <div class="spacer"></div>
             <button id="btn-build" class="btn btn-primary">Build Playlist</button>
             <button id="btn-logout" class="btn btn-ghost btn-sm" style="margin-top: 8px;">Log out</button>
+        </div>
+
+        <!-- Buy Me a Coffee -->
+        <div class="bmc-footer">
+            <a href="https://www.buymeacoffee.com/AppsbyDan" target="_blank" rel="noopener" class="bmc-link">
+                🍺 Buy me a drink
+            </a>
         </div>
     </section>
 
@@ -123,6 +144,13 @@
                 onclick="document.getElementById('screen-success').classList.remove('active');document.getElementById('screen-home').classList.add('active');">
                 Back to Home
             </button>
+        </div>
+
+        <!-- Buy Me a Coffee -->
+        <div class="bmc-footer">
+            <a href="https://www.buymeacoffee.com/AppsbyDan" target="_blank" rel="noopener" class="bmc-link">
+                🍺 Buy me a drink
+            </a>
         </div>
     </section>
 
@@ -224,7 +252,7 @@
                 <div class="setting-section">
                     <p class="setting-section-title">Track Library</p>
                     <p class="text-muted text-sm" style="margin-bottom: 12px;">
-                        Artists are scanned in batches of 50 per build. Use this to force a rescan
+                        Artists are scanned in batches per build. Use this to force a rescan
                         for newly released music.
                     </p>
                     <button id="btn-clear-cache" class="btn btn-outline btn-sm">Scan for new tracks</button>
@@ -236,6 +264,15 @@
                 <div class="setting-section">
                     <p class="setting-section-title">Account</p>
                     <button id="btn-change-client-id" class="btn btn-ghost btn-sm">Change Client ID</button>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Support -->
+                <div class="setting-section" style="text-align: center; padding-bottom: 4px;">
+                    <a href="https://www.buymeacoffee.com/AppsbyDan" target="_blank" rel="noopener" class="bmc-link">
+                        🍺 Buy me a drink
+                    </a>
                 </div>
 
             </div>
