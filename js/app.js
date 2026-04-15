@@ -106,12 +106,38 @@ document.getElementById('btn-logout')?.addEventListener('click', () => {
 document.getElementById('btn-build')?.addEventListener('click', () => buildFlow());
 document.getElementById('btn-rebuild')?.addEventListener('click', () => buildFlow());
 
+// Force a fresh login and show a message — used when the stored token lacks scopes.
+function forceRelogin(reason) {
+    tokens.clear();
+    updateHomeUI();
+    showScreen('screen-home');
+    // Briefly surface an explanation on the home screen
+    const notice = document.getElementById('relogin-notice');
+    if (notice) {
+        notice.textContent = reason;
+        notice.style.display = 'block';
+        setTimeout(() => { notice.style.display = 'none'; }, 12000);
+    }
+}
+
 async function buildFlow() {
     showScreen('screen-building');
     setProgressText('');
 
     try {
         const s = settings.get();
+
+        // ── Pre-flight: verify the token has playlist scopes ──────────────────
+        // Tokens granted before playlist scopes were added won't be able to save.
+        // Catch it here instead of after a 60-second scan.
+        const tokenData = tokens.get();
+        const grantedScopes = (tokenData.scope || '').split(' ');
+        const needsPlaylist = ['playlist-modify-private', 'playlist-modify-public'];
+        const missingScope = needsPlaylist.some(sc => !grantedScopes.includes(sc));
+        if (missingScope) {
+            forceRelogin('Your Spotify login needs to be refreshed to allow playlist creation. Please log in again.');
+            return;
+        }
 
         // ── Step 1: Fetch library ─────────────────────────────────────────────
         setStatus('Fetching your profile…');
@@ -346,11 +372,11 @@ async function buildFlow() {
             } catch (e) {
                 if (e.status === 401) throw e;
                 if (e.status === 403) {
-                    showError(
-                        'Spotify refused to save the playlist (403 Forbidden).\n\n' +
-                        'This usually means the app in your Spotify Developer Dashboard ' +
-                        'is missing the "playlist-modify-private" redirect URI, or you ' +
-                        'need to log out and log back in to grant playlist permissions.'
+                    // Almost always means the token was granted without playlist scopes.
+                    // Log the user out so they re-grant the full scope set on next login.
+                    forceRelogin(
+                        'Spotify denied playlist access. Please log in again — ' +
+                        'you\'ll be asked to approve playlist permissions this time.'
                     );
                     return;
                 }
