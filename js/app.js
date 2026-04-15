@@ -6,6 +6,16 @@ import { tokens, settings, gapCache, playlistId, history, clearAll } from './sto
 import * as api from './api.js';
 import { buildPlaylist } from './engine.js';
 
+// ── Rate-limit helpers ────────────────────────────────────────────────────────
+
+const delay = ms => new Promise(r => setTimeout(r, ms));
+
+// Spotify allows ~180 requests / 30 s in burst mode. With sequential calls
+// a 150 ms pause keeps us well under the limit for large libraries.
+const API_DELAY_MS        = 150;   // between album track fetches
+const GAP_SCAN_DELAY_MS   = 250;   // between gap-artist scans (slightly slower to be safe)
+const MAX_GAP_BATCH       = 30;    // gap artists scanned per build
+
 // ── Screen Management ─────────────────────────────────────────────────────────
 
 function showScreen(id) {
@@ -151,18 +161,29 @@ async function buildFlow() {
             addTrack(t);
         }
 
-        // Source 3: saved album tracks (batch to stay within rate limits)
+        // Source 3: saved album tracks — paced to stay within Spotify rate limits
         if (savedAlbums.length > 0) {
             setStatus(`Expanding ${savedAlbums.length} saved album${savedAlbums.length === 1 ? '' : 's'}…`);
             for (let i = 0; i < savedAlbums.length; i++) {
                 const album = savedAlbums[i];
-                if (i % 10 === 0) setProgressText(`${i + 1} / ${savedAlbums.length}`);
+                if (i % 5 === 0) setProgressText(`${i + 1} / ${savedAlbums.length}`);
                 try {
                     const res = await api.getAlbumTracks(album.id);
                     for (const t of res.items) {
                         addTrack({ ...t, album: { id: album.id, name: album.name, images: album.images } });
                     }
-                } catch { /* skip on error */ }
+                } catch (e) {
+                    if (e.status === 429) {
+                        // Hit rate limit — wait 5 s then continue
+                        setStatus('Rate limited — waiting a moment…');
+                        await delay(5000);
+                        setStatus(`Expanding saved albums…`);
+                        i--;  // retry this album
+                        continue;
+                    }
+                    // other errors: skip this album silently
+                }
+                await delay(API_DELAY_MS);
             }
             setProgressText('');
         }
@@ -182,7 +203,6 @@ async function buildFlow() {
 
             if (gapArtists.length > 0) {
                 const cache    = gapCache.get();
-                const BATCH    = 50;   // ~10-20 s; safe under Spotify rate limits
 
                 // Load cached tracks first (even stale ones — better than nothing)
                 for (const [artistId, entry] of Object.entries(cache)) {
@@ -196,7 +216,7 @@ async function buildFlow() {
                 // Decide who still needs scanning
                 const unscanned = gapArtists.filter(a => !cache[a.id]);
                 const stale     = gapArtists.filter(a => cache[a.id]?.scannedAtMs === 0);
-                const toScan    = [...unscanned, ...stale].slice(0, BATCH);
+                const toScan    = [...unscanned, ...stale].slice(0, MAX_GAP_BATCH);
 
                 if (toScan.length > 0) {
                     setStatus(`Scanning ${toScan.length} artist${toScan.length === 1 ? '' : 's'} for deep cuts…`);
@@ -217,11 +237,15 @@ async function buildFlow() {
                             }
                         } catch (e) {
                             if (e.status === 429) {
+                                // Hit rate limit — wait 5 s then stop batch (picked up next build)
+                                setStatus('Rate limited — finishing up…');
+                                await delay(5000);
                                 rateLimited = true;
                             }
                             // all other errors: skip this artist silently
                         }
                         scanned++;
+                        await delay(GAP_SCAN_DELAY_MS);
                     }
 
                     gapCache.save(newCache);
