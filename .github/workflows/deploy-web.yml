@@ -1,0 +1,39 @@
+name: Deploy Web App to GitHub Pages
+
+# Runs on every push to release/web that touches the web/ directory,
+# and can also be triggered manually from the Actions tab.
+on:
+  push:
+    branches: [release/web]
+    paths:
+      - 'web/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to push to gh-pages branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release/web
+        uses: actions/checkout@v4
+        with:
+          ref: release/web
+
+      # Publish the contents of /web to the root of the gh-pages branch.
+      # peaceiris/actions-gh-pages handles creating the branch on first run
+      # and does a force-push of only the published directory.
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./web          # only the /web subdirectory is published
+          publish_branch: gh-pages
+          # Preserve existing gh-pages content (e.g. CNAME) between deploys
+          keep_files: false
+          # Friendly commit message in the gh-pages branch history
+          commit_message: "Deploy True Shuffle web app — ${{ github.sha }}"
+          # Optional: set a custom domain file if you add one later
+          # cname: your-custom-domain.com

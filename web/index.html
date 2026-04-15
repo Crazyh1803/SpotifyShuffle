@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#121212">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>True Shuffle</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+    <!-- ── Setup Screen ──────────────────────────────────────────────────── -->
+    <section id="screen-setup" class="screen">
+        <div class="logo-area">
+            <span class="logo-icon">🔀</span>
+            <h1>True Shuffle</h1>
+            <p>Better shuffle for your Spotify library</p>
+        </div>
+
+        <div class="card">
+            <div class="setup-steps">
+                <p style="margin-bottom: 12px;">To get started, you need a free Spotify Developer Client ID.
+                    It takes about 2 minutes to set up.</p>
+                <ol>
+                    <li>Open the Spotify Developer Dashboard</li>
+                    <li>Create an app (any name, "Web API" type)</li>
+                    <li>Copy your <strong>Client ID</strong></li>
+                    <li>Add your redirect URI to the app settings</li>
+                </ol>
+            </div>
+
+            <a href="https://developer.spotify.com/dashboard"
+               target="_blank" rel="noopener"
+               class="btn btn-primary" style="margin-bottom: 16px;">
+                Open Spotify Developer Dashboard ↗
+            </a>
+
+            <div class="divider"></div>
+
+            <label for="input-client-id">Your Redirect URI <span style="font-weight:400;text-transform:none;letter-spacing:0;">(add this to your Spotify app)</span></label>
+            <div class="redirect-uri-box" id="redirect-uri-display">Loading…</div>
+            <span class="redirect-uri-label">Copy this URL into Redirect URIs in your Spotify app settings, then save.</span>
+
+            <label for="input-client-id" style="margin-top: 8px;">Client ID</label>
+            <input type="text" id="input-client-id" placeholder="e.g. 4a1b2c3d4e5f6a7b8c9d0e1f" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+
+            <button id="btn-save-client-id" class="btn btn-primary">
+                Save &amp; Continue
+            </button>
+
+            <a href="walkthrough.html" target="_blank" rel="noopener"
+               class="btn btn-ghost btn-sm" style="margin-top: 8px;">
+                Step-by-step guide →
+            </a>
+        </div>
+    </section>
+
+    <!-- ── Home Screen ────────────────────────────────────────────────────── -->
+    <section id="screen-home" class="screen">
+        <div class="home-header">
+            <h1>True Shuffle</h1>
+            <button class="icon-btn" id="btn-settings" aria-label="Settings">⚙️</button>
+        </div>
+
+        <!-- Logged-out state -->
+        <div id="home-logged-out" style="display:none;">
+            <div class="home-hero">
+                <div class="hero-icon">🎵</div>
+                <h2>Real shuffle.<br>No repeats. No bias.</h2>
+                <p>True Shuffle builds a playlist that spreads evenly across all your
+                   artists — so your whole library actually gets played.</p>
+            </div>
+            <div class="spacer"></div>
+            <button id="btn-login" class="btn btn-primary">Log in with Spotify</button>
+            <button id="btn-change-setup" class="btn btn-ghost btn-sm" style="margin-top: 8px;"
+                onclick="document.getElementById('screen-home').classList.remove('active');document.getElementById('screen-setup').classList.add('active');">
+                Change Client ID
+            </button>
+        </div>
+
+        <!-- Logged-in state -->
+        <div id="home-logged-in" style="display:none;">
+            <div class="home-hero">
+                <div class="hero-icon">🔀</div>
+                <h2>Ready to shuffle</h2>
+                <p>Tap Build to create a fresh playlist that covers your entire
+                   Spotify library — artists you love and artists you've forgotten.</p>
+            </div>
+            <div class="spacer"></div>
+            <button id="btn-build" class="btn btn-primary">Build Playlist</button>
+            <button id="btn-logout" class="btn btn-ghost btn-sm" style="margin-top: 8px;">Log out</button>
+        </div>
+    </section>
+
+    <!-- ── Building Screen ────────────────────────────────────────────────── -->
+    <section id="screen-building" class="screen">
+        <div class="spinner"></div>
+        <p id="build-status">Starting…</p>
+        <p id="build-progress"></p>
+        <p class="text-muted text-sm" style="max-width: 260px; text-align: center; margin-top: 8px;">
+            First builds scan your artist library — this can take 30–60 seconds.
+            Future builds are much faster.
+        </p>
+    </section>
+
+    <!-- ── Success Screen ────────────────────────────────────────────────── -->
+    <section id="screen-success" class="screen">
+        <div class="success-check">✓</div>
+        <h2>Playlist Built!</h2>
+        <p id="success-track-count" class="text-muted"></p>
+        <p id="success-tiers"></p>
+        <p id="scan-progress" class="text-muted text-sm"></p>
+
+        <div class="success-actions">
+            <a id="success-link" href="#" target="_blank" rel="noopener">
+                Open in Spotify ↗
+            </a>
+            <button id="btn-rebuild" class="btn btn-secondary">Build Another</button>
+            <button class="btn btn-ghost btn-sm"
+                onclick="document.getElementById('screen-success').classList.remove('active');document.getElementById('screen-home').classList.add('active');">
+                Back to Home
+            </button>
+        </div>
+    </section>
+
+    <!-- ── Error Screen ───────────────────────────────────────────────────── -->
+    <section id="screen-error" class="screen">
+        <div class="error-icon">⚠️</div>
+        <h2>Something went wrong</h2>
+        <p id="error-message"></p>
+        <div style="width: 100%; margin-top: auto;">
+            <button id="btn-try-again" class="btn btn-primary">Try Again</button>
+        </div>
+    </section>
+
+    <!-- ── Settings Overlay ───────────────────────────────────────────────── -->
+    <div id="settings-overlay" class="settings-overlay" role="dialog" aria-label="Settings">
+        <div class="settings-panel">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button class="settings-close-btn" id="btn-settings-close" aria-label="Close settings">✕</button>
+            </div>
+
+            <div class="settings-body">
+
+                <!-- Discovery Bias -->
+                <div class="setting-section">
+                    <p class="setting-section-title">Discovery</p>
+                    <div class="setting-row">
+                        <div>
+                            <div class="setting-row-label">Discovery bias</div>
+                            <div class="setting-row-desc">How often discovery artists appear vs. familiar ones</div>
+                        </div>
+                        <span class="setting-value" id="bias-value">60%</span>
+                    </div>
+                    <input type="range" id="input-bias" min="0" max="100" step="5" value="60">
+                    <div style="display:flex;justify-content:space-between;margin-top:6px;">
+                        <span class="text-muted text-sm">Familiar</span>
+                        <span class="text-muted text-sm">Discovery</span>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Playlist Duration -->
+                <div class="setting-section">
+                    <p class="setting-section-title">Playlist</p>
+                    <div class="setting-row">
+                        <div>
+                            <div class="setting-row-label">Target duration</div>
+                            <div class="setting-row-desc">Approximate playlist length</div>
+                        </div>
+                        <span class="setting-value" id="duration-value">2.0 hr</span>
+                    </div>
+                    <input type="range" id="input-duration" min="0.5" max="4" step="0.5" value="2">
+                    <div style="display:flex;justify-content:space-between;margin-top:6px;">
+                        <span class="text-muted text-sm">30 min</span>
+                        <span class="text-muted text-sm">4 hr</span>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Cooldown -->
+                <div class="setting-section">
+                    <p class="setting-section-title">Cooldown</p>
+                    <div class="setting-row">
+                        <div>
+                            <div class="setting-row-label">Recent playlist memory</div>
+                            <div class="setting-row-desc">Avoid songs &amp; artists from this many previous builds</div>
+                        </div>
+                        <div class="stepper">
+                            <button class="stepper-btn" id="btn-cooldown-dec" aria-label="Decrease">−</button>
+                            <span class="stepper-val" id="cooldown-value">2</span>
+                            <button class="stepper-btn" id="btn-cooldown-inc" aria-label="Increase">+</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Liked Songs mode -->
+                <div class="setting-section">
+                    <p class="setting-section-title">Liked Songs shuffle</p>
+                    <div class="toggle-row">
+                        <div class="toggle-label-group">
+                            <div class="label-text">Explore artist catalogs</div>
+                            <div class="label-desc">When you have no followed artists, also include top tracks
+                                &amp; saved album cuts (not just your liked songs)</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="input-explore">
+                            <span class="toggle-track"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Track Library -->
+                <div class="setting-section">
+                    <p class="setting-section-title">Track Library</p>
+                    <p class="text-muted text-sm" style="margin-bottom: 12px;">
+                        Artists are scanned in batches of 50 per build. Use this to force a rescan
+                        for newly released music.
+                    </p>
+                    <button id="btn-clear-cache" class="btn btn-outline btn-sm">Scan for new tracks</button>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Account -->
+                <div class="setting-section">
+                    <p class="setting-section-title">Account</p>
+                    <button id="btn-change-client-id" class="btn btn-ghost btn-sm">Change Client ID</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+</div><!-- /.app -->
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
