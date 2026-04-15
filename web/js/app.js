@@ -312,30 +312,50 @@ async function buildFlow() {
         let pid = playlistId.get();
         let playlistUrl;
 
-        if (pid) {
-            try {
-                // Replace first 100 tracks, then append the rest
-                await api.replacePlaylistTracks(pid, uris.slice(0, 100));
-                for (let i = 100; i < uris.length; i += 100) {
-                    await api.addTracksToPlaylist(pid, uris.slice(i, i + 100));
-                }
-                await api.followPlaylist(pid);
-                playlistUrl = `https://open.spotify.com/playlist/${pid}`;
-            } catch {
-                pid = null;  // fall through to create a new playlist
+        // Helper: push all URIs to a playlist in 100-track chunks
+        async function pushTracks(id, trackUris) {
+            await api.replacePlaylistTracks(id, trackUris.slice(0, 100));
+            for (let i = 100; i < trackUris.length; i += 100) {
+                await api.addTracksToPlaylist(id, trackUris.slice(i, i + 100));
             }
         }
 
-        if (!pid) {
-            const pl = await api.createPlaylist(user.id, 'True Shuffle', desc);
-            playlistId.save(pl.id);
-            pid = pl.id;
-            await api.replacePlaylistTracks(pid, uris.slice(0, 100));
-            for (let i = 100; i < uris.length; i += 100) {
-                await api.addTracksToPlaylist(pid, uris.slice(i, i + 100));
+        // Try updating the stored playlist first
+        if (pid) {
+            try {
+                await pushTracks(pid, uris);
+                await api.followPlaylist(pid);
+                playlistUrl = `https://open.spotify.com/playlist/${pid}`;
+            } catch (e) {
+                if (e.status === 401) throw e;   // session expired — re-throw
+                // Playlist gone / inaccessible — clear it and create a fresh one
+                playlistId.clear();
+                pid = null;
             }
-            await api.followPlaylist(pid);
-            playlistUrl = `https://open.spotify.com/playlist/${pid}`;
+        }
+
+        // Create a brand-new playlist if needed
+        if (!pid) {
+            try {
+                const pl = await api.createPlaylist(user.id, 'True Shuffle', desc);
+                playlistId.save(pl.id);
+                pid = pl.id;
+                await pushTracks(pid, uris);
+                await api.followPlaylist(pid);
+                playlistUrl = `https://open.spotify.com/playlist/${pid}`;
+            } catch (e) {
+                if (e.status === 401) throw e;
+                if (e.status === 403) {
+                    showError(
+                        'Spotify refused to save the playlist (403 Forbidden).\n\n' +
+                        'This usually means the app in your Spotify Developer Dashboard ' +
+                        'is missing the "playlist-modify-private" redirect URI, or you ' +
+                        'need to log out and log back in to grant playlist permissions.'
+                    );
+                    return;
+                }
+                throw e;   // unexpected error — let outer handler show it
+            }
         }
 
         // Record to cooldown history

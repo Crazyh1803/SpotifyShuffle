@@ -12,7 +12,7 @@ const BASE = 'https://api.spotify.com/v1';
 // Enforcing a minimum 350 ms gap between every call keeps us well under the limit
 // and means a 100-call build takes ~35 s — acceptable for a first build.
 
-const CALL_GAP_MS = 350;
+const CALL_GAP_MS = 250;
 let _nextCallAt = 0;
 
 async function throttle() {
@@ -123,11 +123,14 @@ export async function getArtistTopTracks(artistId) {
 }
 
 export async function getArtistAlbums(artistId, includeGroups = 'album,single', limit = 20) {
-    return apiFetch(`/artists/${artistId}/albums?include_groups=${includeGroups}&limit=${limit}&market=from_token`);
+    // No explicit market needed — Spotify infers it from the access token.
+    return apiFetch(`/artists/${artistId}/albums?include_groups=${includeGroups}&limit=${limit}`);
 }
 
 export async function getAlbumTracks(albumId, limit = 50) {
-    return apiFetch(`/albums/${albumId}/tracks?limit=${limit}&market=from_token`);
+    // No explicit market needed — Spotify infers it from the access token.
+    // Using market=from_token here can cause 403 for albums not available in the user's region.
+    return apiFetch(`/albums/${albumId}/tracks?limit=${limit}`);
 }
 
 export async function searchTracks(query, limit = 10) {
