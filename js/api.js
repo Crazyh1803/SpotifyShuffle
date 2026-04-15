@@ -6,9 +6,28 @@ import { refreshAccessToken } from './auth.js';
 
 const BASE = 'https://api.spotify.com/v1';
 
+// ── Global rate limiter ───────────────────────────────────────────────────────
+// Spotify doesn't publish exact limits, but empirically a large build (200+ calls)
+// triggers 429 if calls come in faster than ~2-3 per second.
+// Enforcing a minimum 350 ms gap between every call keeps us well under the limit
+// and means a 100-call build takes ~35 s — acceptable for a first build.
+
+const CALL_GAP_MS = 350;
+let _nextCallAt = 0;
+
+async function throttle() {
+    const now  = Date.now();
+    const wait = _nextCallAt - now;
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    _nextCallAt = Date.now() + CALL_GAP_MS;
+}
+
 // ── Core fetch wrapper ────────────────────────────────────────────────────────
 
 async function apiFetch(path, options = {}) {
+    // Wait until the global rate-limit gap has elapsed before every call
+    await throttle();
+
     let t = tokens.get();
 
     // Refresh token if expired (with 60s buffer)
@@ -28,7 +47,10 @@ async function apiFetch(path, options = {}) {
     });
 
     if (res.status === 429) {
-        throw Object.assign(new Error('Rate limited'), { status: 429 });
+        // Back off for the duration Spotify asks (Retry-After header, or 10 s default)
+        const retryAfter = parseInt(res.headers.get('Retry-After') || '10', 10);
+        _nextCallAt = Date.now() + retryAfter * 1000 + CALL_GAP_MS;
+        throw Object.assign(new Error('Rate limited'), { status: 429, retryAfter });
     }
     if (res.status === 401) {
         // Token truly invalid — force re-login

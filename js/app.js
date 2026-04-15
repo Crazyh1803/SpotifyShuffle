@@ -6,15 +6,14 @@ import { tokens, settings, gapCache, playlistId, history, clearAll } from './sto
 import * as api from './api.js';
 import { buildPlaylist } from './engine.js';
 
-// ── Rate-limit helpers ────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
+// Rate limiting is handled globally inside apiFetch (350 ms between every call).
+// These constants control how many items we process per build.
+
+const MAX_ALBUM_EXPANSION = 50;   // saved albums to expand per build (caps pre-scan API spend)
+const MAX_GAP_BATCH       = 20;   // gap artists scanned per build (keeps first build under ~60 s)
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
-
-// Spotify allows ~180 requests / 30 s in burst mode. With sequential calls
-// a 150 ms pause keeps us well under the limit for large libraries.
-const API_DELAY_MS        = 150;   // between album track fetches
-const GAP_SCAN_DELAY_MS   = 250;   // between gap-artist scans (slightly slower to be safe)
-const MAX_GAP_BATCH       = 30;    // gap artists scanned per build
 
 // ── Screen Management ─────────────────────────────────────────────────────────
 
@@ -161,29 +160,21 @@ async function buildFlow() {
             addTrack(t);
         }
 
-        // Source 3: saved album tracks — paced to stay within Spotify rate limits
-        if (savedAlbums.length > 0) {
-            setStatus(`Expanding ${savedAlbums.length} saved album${savedAlbums.length === 1 ? '' : 's'}…`);
-            for (let i = 0; i < savedAlbums.length; i++) {
-                const album = savedAlbums[i];
-                if (i % 5 === 0) setProgressText(`${i + 1} / ${savedAlbums.length}`);
+        // Source 3: saved album tracks (capped — apiFetch throttles automatically)
+        const albumsToExpand = savedAlbums.slice(0, MAX_ALBUM_EXPANSION);
+        if (albumsToExpand.length > 0) {
+            setStatus(`Expanding ${albumsToExpand.length} saved album${albumsToExpand.length === 1 ? '' : 's'}…`);
+            for (let i = 0; i < albumsToExpand.length; i++) {
+                const album = albumsToExpand[i];
+                if (i % 5 === 0) setProgressText(`${i + 1} / ${albumsToExpand.length}`);
                 try {
                     const res = await api.getAlbumTracks(album.id);
                     for (const t of res.items) {
                         addTrack({ ...t, album: { id: album.id, name: album.name, images: album.images } });
                     }
-                } catch (e) {
-                    if (e.status === 429) {
-                        // Hit rate limit — wait 5 s then continue
-                        setStatus('Rate limited — waiting a moment…');
-                        await delay(5000);
-                        setStatus(`Expanding saved albums…`);
-                        i--;  // retry this album
-                        continue;
-                    }
-                    // other errors: skip this album silently
+                } catch {
+                    // skip silently — 429 is handled globally in apiFetch
                 }
-                await delay(API_DELAY_MS);
             }
             setProgressText('');
         }
@@ -237,15 +228,14 @@ async function buildFlow() {
                             }
                         } catch (e) {
                             if (e.status === 429) {
-                                // Hit rate limit — wait 5 s then stop batch (picked up next build)
-                                setStatus('Rate limited — finishing up…');
-                                await delay(5000);
+                                // apiFetch already applied Retry-After; stop batch, pick up next build
                                 rateLimited = true;
                             }
                             // all other errors: skip this artist silently
                         }
                         scanned++;
-                        await delay(GAP_SCAN_DELAY_MS);
+                        // Extra pause between gap scans on top of the global throttle
+                        await delay(100);
                     }
 
                     gapCache.save(newCache);
