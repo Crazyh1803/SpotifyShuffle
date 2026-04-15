@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#121212">
+    <title>True Shuffle — Connecting…</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="callback-container">
+    <div class="spinner"></div>
+    <p id="callback-status">Connecting to Spotify…</p>
+</div>
+
+<script type="module">
+    import { exchangeCode } from './js/auth.js';
+    import { tokens, settings } from './js/storage.js';
+
+    async function handleCallback() {
+        const statusEl = document.getElementById('callback-status');
+
+        const params = new URLSearchParams(window.location.search);
+        const code   = params.get('code');
+        const error  = params.get('error');
+
+        if (error) {
+            statusEl.textContent = `Login cancelled or denied: ${error}. Redirecting…`;
+            setTimeout(() => { window.location.href = 'index.html'; }, 2500);
+            return;
+        }
+
+        if (!code) {
+            statusEl.textContent = 'No authorization code received. Redirecting…';
+            setTimeout(() => { window.location.href = 'index.html'; }, 2500);
+            return;
+        }
+
+        try {
+            const clientId = settings.get().clientId;
+            if (!clientId) throw new Error('Client ID not set. Please configure the app first.');
+
+            statusEl.textContent = 'Exchanging authorization code…';
+            const tokenData = await exchangeCode(code, clientId);
+            tokens.save(tokenData);
+
+            // Clear the code from the address bar before redirecting
+            window.location.replace('index.html');
+        } catch (e) {
+            statusEl.textContent = `Login failed: ${e.message}`;
+            const retryLink = document.createElement('a');
+            retryLink.href = 'index.html';
+            retryLink.textContent = 'Back to app';
+            retryLink.style.marginTop = '16px';
+            retryLink.style.color = '#1db954';
+            document.getElementById('callback-container').appendChild(retryLink);
+        }
+    }
+
+    handleCallback();
+</script>
+</body>
+</html>
