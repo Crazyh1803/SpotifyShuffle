@@ -671,5 +671,18 @@ input[type="range"]::-moz-range-thumb {
 .text-center { text-align: center; }
 .full-width { width: 100%; }
 
+/* ── Re-login notice banner ──────────────────────────────────────────────────── */
+.relogin-notice {
+    background: #2a1500;
+    border: 1px solid #FF8C00;
+    border-radius: var(--radius);
+    color: #FFB347;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
 /* ── Safe area for notched phones ────────────────────────────────────────────── */
 .screen { padding-bottom: max(40px, env(safe-area-inset-bottom)); }
