@@ -18,6 +18,12 @@
     import { exchangeCode } from './js/auth.js';
     import { tokens, settings } from './js/storage.js';
 
+    // Scopes the app needs in order to save playlists.
+    const REQUIRED_SCOPES = [
+        'playlist-modify-private',
+        'playlist-modify-public',
+    ];
+
     async function handleCallback() {
         const statusEl = document.getElementById('callback-status');
 
@@ -43,6 +49,25 @@
 
             statusEl.textContent = 'Exchanging authorization code…';
             const tokenData = await exchangeCode(code, clientId);
+
+            // Verify Spotify actually granted the playlist scopes we requested.
+            // If they're missing the user needs to log in again — do NOT save a
+            // broken token that will just fail silently during playlist save.
+            const granted = (tokenData.scope || '').split(' ');
+            const missing = REQUIRED_SCOPES.filter(s => !granted.includes(s));
+            if (missing.length > 0) {
+                statusEl.textContent =
+                    '⚠️ Spotify didn\'t grant playlist permissions. ' +
+                    'Please go back and log in again — make sure to click ' +
+                    '"Agree" on the Spotify permissions screen.';
+                const retryLink = document.createElement('a');
+                retryLink.href = 'index.html';
+                retryLink.textContent = 'Back to app';
+                retryLink.style.cssText = 'display:block;margin-top:20px;color:#1db954;font-size:16px;';
+                document.getElementById('callback-container').appendChild(retryLink);
+                return;  // do NOT save the token
+            }
+
             tokens.save(tokenData);
 
             // Clear the code from the address bar before redirecting
@@ -52,8 +77,7 @@
             const retryLink = document.createElement('a');
             retryLink.href = 'index.html';
             retryLink.textContent = 'Back to app';
-            retryLink.style.marginTop = '16px';
-            retryLink.style.color = '#1db954';
+            retryLink.style.cssText = 'display:block;margin-top:16px;color:#1db954;';
             document.getElementById('callback-container').appendChild(retryLink);
         }
     }
