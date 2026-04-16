@@ -381,8 +381,16 @@ async function buildFlow() {
             } catch (e) {
                 if (e.status === 401) throw e;
                 if (e.status === 403) {
-                    // Show the raw Spotify error so we can diagnose exactly why it's 403.
-                    showError('Playlist create failed (403). Spotify said: ' + e.message);
+                    const t = tokens.get();
+                    const scopeStr = t.scope || '(no scope saved)';
+                    const hasPrivate = scopeStr.includes('playlist-modify-private');
+                    const hasPublic  = scopeStr.includes('playlist-modify-public');
+                    showError(
+                        `403 creating playlist for user "${user.id}"\n` +
+                        `playlist-modify-private: ${hasPrivate}\n` +
+                        `playlist-modify-public: ${hasPublic}\n` +
+                        `Full scope: ${scopeStr}`
+                    );
                     return;
                 }
                 throw e;   // unexpected error — let outer handler show it
