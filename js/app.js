@@ -49,6 +49,15 @@ function minifyTrack(t) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
+    // ── Recovery: if Spotify redirected to index.html instead of callback.html
+    // (happens when the wrong redirect URI was registered in the Spotify dashboard),
+    // forward the code/error params to callback.html so the login can complete.
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('code') || urlParams.has('error')) {
+        window.location.replace('callback.html' + window.location.search);
+        return;
+    }
+
     // Show computed redirect URI on setup screen
     const uriEl = document.getElementById('redirect-uri-display');
     if (uriEl) uriEl.textContent = getRedirectUri();
