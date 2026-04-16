@@ -175,7 +175,7 @@ export async function getAllSavedAlbums(onProgress) {
 export async function createPlaylist(userId, name, description) {
     return apiFetch(`/users/${userId}/playlists`, {
         method: 'POST',
-        body: JSON.stringify({ name, description, public: false }),
+        body: JSON.stringify({ name, description, public: true }),
     });
 }
 
