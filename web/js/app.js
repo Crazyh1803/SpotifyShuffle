@@ -381,12 +381,8 @@ async function buildFlow() {
             } catch (e) {
                 if (e.status === 401) throw e;
                 if (e.status === 403) {
-                    // Almost always means the token was granted without playlist scopes.
-                    // Log the user out so they re-grant the full scope set on next login.
-                    forceRelogin(
-                        'Spotify denied playlist access. Please log in again — ' +
-                        'you\'ll be asked to approve playlist permissions this time.'
-                    );
+                    // Show the raw Spotify error so we can diagnose exactly why it's 403.
+                    showError('Playlist create failed (403). Spotify said: ' + e.message);
                     return;
                 }
                 throw e;   // unexpected error — let outer handler show it
