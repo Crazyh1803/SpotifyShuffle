@@ -173,10 +173,23 @@ export async function getAllSavedAlbums(onProgress) {
 // ── Playlists ─────────────────────────────────────────────────────────────────
 
 export async function createPlaylist(userId, name, description) {
-    return apiFetch(`/users/${userId}/playlists`, {
-        method: 'POST',
-        body: JSON.stringify({ name, description, public: true }),
-    });
+    // POST /me/playlists uses the token identity directly and avoids the 403
+    // that POST /users/{id}/playlists returns in Spotify Development Mode.
+    // Fall back to the user-id path only if /me/playlists returns 404.
+    try {
+        return await apiFetch('/me/playlists', {
+            method: 'POST',
+            body: JSON.stringify({ name, description, public: false }),
+        });
+    } catch (e) {
+        if (e.status === 404) {
+            return apiFetch(`/users/${userId}/playlists`, {
+                method: 'POST',
+                body: JSON.stringify({ name, description, public: false }),
+            });
+        }
+        throw e;
+    }
 }
 
 export async function replacePlaylistTracks(playlistId, uris) {
