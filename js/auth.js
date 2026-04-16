@@ -47,6 +47,7 @@ export async function startAuth(clientId) {
         code_challenge_method: 'S256',
         code_challenge: challenge,
         scope: SCOPES,
+        show_dialog: 'true',   // always show Spotify's permissions screen so user can approve
     });
     window.location.href = `${SPOTIFY_AUTH_URL}?${params}`;
 }
