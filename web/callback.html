@@ -7,11 +7,30 @@
     <title>True Shuffle — Connecting…</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        #debug-log {
+            margin-top: 24px;
+            padding: 12px 16px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #aaa;
+            text-align: left;
+            width: 90%;
+            max-width: 360px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            display: none;
+        }
+    </style>
 </head>
 <body>
 <div id="callback-container">
     <div class="spinner"></div>
     <p id="callback-status">Connecting to Spotify…</p>
+    <div id="debug-log"></div>
 </div>
 
 <script type="module">
@@ -24,6 +43,15 @@
         'playlist-modify-public',
     ];
 
+    const debugEl = document.getElementById('debug-log');
+    const lines = [];
+    function dbg(msg) {
+        console.log('[callback]', msg);
+        lines.push(msg);
+        debugEl.textContent = lines.join('\n');
+        debugEl.style.display = 'block';
+    }
+
     async function handleCallback() {
         const statusEl = document.getElementById('callback-status');
 
@@ -31,15 +59,31 @@
         const code   = params.get('code');
         const error  = params.get('error');
 
+        dbg('URL: ' + window.location.href.slice(0, 120));
+        dbg('code present: ' + !!code);
+        dbg('error: ' + (error || 'none'));
+        dbg('pkce_verifier: ' + (sessionStorage.getItem('pkce_verifier') ? 'present' : 'MISSING'));
+        dbg('clientId: ' + (settings.get().clientId ? 'set' : 'MISSING'));
+
         if (error) {
-            statusEl.textContent = `Login cancelled or denied: ${error}. Redirecting…`;
-            setTimeout(() => { window.location.href = 'index.html'; }, 2500);
+            statusEl.textContent = `Login cancelled or denied: ${error}`;
+            dbg('→ error param, stopping');
+            const retryLink = document.createElement('a');
+            retryLink.href = 'index.html';
+            retryLink.textContent = 'Back to app';
+            retryLink.style.cssText = 'display:block;margin-top:20px;color:#1db954;font-size:16px;';
+            document.getElementById('callback-container').appendChild(retryLink);
             return;
         }
 
         if (!code) {
-            statusEl.textContent = 'No authorization code received. Redirecting…';
-            setTimeout(() => { window.location.href = 'index.html'; }, 2500);
+            statusEl.textContent = 'No authorization code received.';
+            dbg('→ no code param, stopping');
+            const retryLink = document.createElement('a');
+            retryLink.href = 'index.html';
+            retryLink.textContent = 'Back to app';
+            retryLink.style.cssText = 'display:block;margin-top:20px;color:#1db954;font-size:16px;';
+            document.getElementById('callback-container').appendChild(retryLink);
             return;
         }
 
@@ -48,13 +92,16 @@
             if (!clientId) throw new Error('Client ID not set. Please configure the app first.');
 
             statusEl.textContent = 'Exchanging authorization code…';
+            dbg('→ calling exchangeCode…');
             const tokenData = await exchangeCode(code, clientId);
+            dbg('→ token received');
+            dbg('scope: ' + (tokenData.scope || '(empty)'));
 
             // Verify Spotify actually granted the playlist scopes we requested.
-            // If they're missing the user needs to log in again — do NOT save a
-            // broken token that will just fail silently during playlist save.
             const granted = (tokenData.scope || '').split(' ');
             const missing = REQUIRED_SCOPES.filter(s => !granted.includes(s));
+            dbg('missing scopes: ' + (missing.length ? missing.join(', ') : 'none'));
+
             if (missing.length > 0) {
                 statusEl.textContent =
                     '⚠️ Spotify didn\'t grant playlist permissions. ' +
@@ -68,11 +115,14 @@
                 return;  // do NOT save the token
             }
 
+            dbg('→ scopes OK, saving token…');
             tokens.save(tokenData);
+            dbg('→ redirecting to index.html');
 
             // Clear the code from the address bar before redirecting
             window.location.replace('index.html');
         } catch (e) {
+            dbg('→ ERROR: ' + e.message);
             statusEl.textContent = `Login failed: ${e.message}`;
             const retryLink = document.createElement('a');
             retryLink.href = 'index.html';
