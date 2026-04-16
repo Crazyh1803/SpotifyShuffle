@@ -371,29 +371,23 @@ async function buildFlow() {
 
         // Create a brand-new playlist if needed
         if (!pid) {
+            let step = 'createPlaylist';
             try {
                 const pl = await api.createPlaylist(user.id, 'True Shuffle', desc);
                 playlistId.save(pl.id);
                 pid = pl.id;
+                step = 'replacePlaylistTracks';
                 await pushTracks(pid, uris);
+                step = 'followPlaylist';
                 await api.followPlaylist(pid);
                 playlistUrl = `https://open.spotify.com/playlist/${pid}`;
             } catch (e) {
                 if (e.status === 401) throw e;
                 if (e.status === 403) {
-                    const t = tokens.get();
-                    const scopeStr = t.scope || '(no scope saved)';
-                    const hasPrivate = scopeStr.includes('playlist-modify-private');
-                    const hasPublic  = scopeStr.includes('playlist-modify-public');
-                    showError(
-                        `403 creating playlist for user "${user.id}"\n` +
-                        `playlist-modify-private: ${hasPrivate}\n` +
-                        `playlist-modify-public: ${hasPublic}\n` +
-                        `Full scope: ${scopeStr}`
-                    );
+                    showError(`403 at step "${step}": ${e.message}`);
                     return;
                 }
-                throw e;   // unexpected error — let outer handler show it
+                throw e;
             }
         }
 
