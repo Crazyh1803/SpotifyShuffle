@@ -176,8 +176,16 @@ async function buildFlow() {
         const tracksByArtist = {};  // artistId → Track[]
         const likedIds = new Set();
 
+        // Tracks which artists appear as the PRIMARY (first) artist on any Source 1-3 track.
+        // Used to determine gap artists: a followed artist is a gap artist only if they have
+        // no PRIMARY coverage from Sources 1-3. Artists appearing solely as features on
+        // other artists' tracks should still be treated as gap artists and scanned for Tier C.
+        // (tracksByArtist still gets all-artist entries so the track pool stays rich.)
+        const primaryCoveredIds = new Set();
+
         function addTrack(track) {
             if (!track?.id || !track.artists?.length) return;
+            primaryCoveredIds.add(track.artists[0].id);  // only primary artist counts as "covered"
             for (const artist of track.artists) {
                 if (!tracksByArtist[artist.id]) tracksByArtist[artist.id] = [];
                 if (!tracksByArtist[artist.id].some(t => t.id === track.id)) {
@@ -225,7 +233,10 @@ async function buildFlow() {
             effectiveFollowedArtists = followedArtists;
             const followedIds = new Set(followedArtists.map(a => a.id));
 
-            const gapArtists = followedArtists.filter(a => !tracksByArtist[a.id]);
+            // Gap artists = followed artists with no PRIMARY track coverage from Sources 1-3.
+            // Using primaryCoveredIds (not tracksByArtist) means artists who only appear as
+            // features on other artists' tracks are still treated as undiscovered and scanned.
+            const gapArtists = followedArtists.filter(a => !primaryCoveredIds.has(a.id));
 
             if (gapArtists.length > 0) {
                 const cache    = gapCache.get();
