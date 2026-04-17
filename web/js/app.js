@@ -260,6 +260,7 @@ async function buildFlow() {
                     const newCache = { ...cache };
                     let scanned = 0;
                     let rateLimited = false;
+                    let firstScanError = null;   // diagnostic: surface the first failure
 
                     for (const artist of toScan) {
                         if (rateLimited) break;
@@ -272,16 +273,23 @@ async function buildFlow() {
                             if (!topIds.has(artist.id) && tracks.length > 0) {
                                 discoveryIds.add(artist.id);
                             }
+                            firstScanError = null;  // at least one succeeded — clear error
                         } catch (e) {
+                            if (!firstScanError) firstScanError = e;
                             if (e.status === 429) {
-                                // apiFetch already applied Retry-After; stop batch, pick up next build
                                 rateLimited = true;
                             }
-                            // all other errors: skip this artist silently
+                            // all other errors: skip this artist, continue scan
                         }
                         scanned++;
-                        // Extra pause between gap scans on top of the global throttle
                         await delay(100);
+                    }
+
+                    // If every scan attempt failed, surface the error so it's diagnosable
+                    const anySucceeded = Object.keys(newCache).length > Object.keys(cache).length;
+                    if (!anySucceeded && firstScanError) {
+                        console.error('Gap scan: all attempts failed. First error:', firstScanError);
+                        window.__scanError = firstScanError.message;
                     }
 
                     gapCache.save(newCache);
@@ -454,7 +462,10 @@ function showSuccess({ trackCount, durationMs, tierACount, tierBCount, tierCCoun
     const progressEl = document.getElementById('scan-progress');
     if (progressEl) {
         const sp = window.__scanProgress;
-        if (sp && sp.scanned < sp.total && !likedSongsOnlyMode) {
+        if (window.__scanError) {
+            progressEl.textContent = `Scan error: ${window.__scanError}`;
+            progressEl.style.display = 'block';
+        } else if (sp && sp.scanned < sp.total && !likedSongsOnlyMode) {
             progressEl.textContent = `Library: ${sp.scanned} / ${sp.total} artists scanned · Build again for more`;
             progressEl.style.display = 'block';
         } else {
