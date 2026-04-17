@@ -116,10 +116,11 @@ export async function getTopTracks(timeRange = 'long_term') {
     return tracks;
 }
 
-export async function getArtistTopTracks(artistId) {
-    // market=from_token is required — Spotify returns 403 Forbidden without it.
-    // from_token derives the market from the user's access token automatically.
-    return apiFetch(`/artists/${artistId}/top-tracks?market=from_token`);
+export async function getArtistTopTracks(artistId, market) {
+    // Pass the user's actual country code (from getUserProfile().country).
+    // market=from_token was deprecated in Spotify's February 2026 API migration.
+    const q = market ? `?market=${encodeURIComponent(market)}` : '';
+    return apiFetch(`/artists/${artistId}/top-tracks${q}`);
 }
 
 export async function getArtistAlbums(artistId, includeGroups = 'album,single', limit = 20) {
