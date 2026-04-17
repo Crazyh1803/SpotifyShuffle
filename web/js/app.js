@@ -262,25 +262,63 @@ async function buildFlow() {
                     let rateLimited = false;
                     let firstScanError = null;   // diagnostic: surface the first failure
 
+                    let topTracksBlocked = false;
+
                     for (const artist of toScan) {
                         if (rateLimited) break;
                         setProgressText(`${scanned + 1} / ${toScan.length}`);
+
+                        const found = [];
+
+                        // ── Strategy 1: album-based (preferred) ──────────────────────
+                        // Mirrors the Android app's primary gap-fill strategy.
+                        // getArtistTopTracks returns 403 in Spotify dev mode, so albums
+                        // are the reliable path. Picks 2 random albums/singles, fetches
+                        // their full track lists, filters to tracks by this artist.
                         try {
-                            const res    = await api.getArtistTopTracks(artist.id, user.country);
-                            const tracks = (res.tracks || []).map(minifyTrack);
-                            for (const t of tracks) addTrack(t);
-                            newCache[artist.id] = { tracks, scannedAtMs: Date.now() };
-                            if (!topIds.has(artist.id) && tracks.length > 0) {
-                                discoveryIds.add(artist.id);
+                            const albumsRes = await api.getArtistAlbums(artist.id, 'album,single', 20);
+                            const albums = (albumsRes.items || []).sort(() => Math.random() - 0.5).slice(0, 2);
+                            for (const album of albums) {
+                                try {
+                                    const tracksRes = await api.getAlbumTracks(album.id);
+                                    const albumTracks = (tracksRes.items || [])
+                                        .filter(t => t.id && t.uri?.startsWith('spotify:track:'))
+                                        .filter(t => (t.artists || []).some(a => a.id === artist.id))
+                                        .map(t => minifyTrack({ ...t, popularity: 0 }));
+                                    found.push(...albumTracks);
+                                } catch (e) {
+                                    if (e.status === 429) { rateLimited = true; break; }
+                                }
                             }
-                            firstScanError = null;  // at least one succeeded — clear error
                         } catch (e) {
                             if (!firstScanError) firstScanError = e;
-                            if (e.status === 429) {
-                                rateLimited = true;
-                            }
-                            // all other errors: skip this artist, continue scan
+                            if (e.status === 429) rateLimited = true;
                         }
+
+                        // ── Strategy 2: top-tracks fallback ──────────────────────────
+                        // Only tried if album strategy returned nothing and endpoint
+                        // hasn't already 403'd (dev-mode restriction).
+                        if (found.length === 0 && !topTracksBlocked) {
+                            try {
+                                const res = await api.getArtistTopTracks(artist.id, user.country);
+                                found.push(...(res.tracks || []).map(minifyTrack));
+                                firstScanError = null;
+                            } catch (e) {
+                                if (!firstScanError) firstScanError = e;
+                                if (e.status === 403) topTracksBlocked = true;
+                                if (e.status === 429) rateLimited = true;
+                            }
+                        }
+
+                        if (found.length > 0) firstScanError = null;
+
+                        const dedupedTracks = found.filter((t, i, a) => a.findIndex(x => x.id === t.id) === i);
+                        for (const t of dedupedTracks) addTrack(t);
+                        newCache[artist.id] = { tracks: dedupedTracks, scannedAtMs: Date.now() };
+                        if (!topIds.has(artist.id) && dedupedTracks.length > 0) {
+                            discoveryIds.add(artist.id);
+                        }
+
                         scanned++;
                         await delay(100);
                     }
