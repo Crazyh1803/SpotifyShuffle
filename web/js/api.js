@@ -193,8 +193,8 @@ export async function createPlaylist(userId, name, description) {
 }
 
 export async function replacePlaylistTracks(playlistId, uris) {
-    // Max 100 URIs per call
-    const res = await apiFetch(`/playlists/${playlistId}/tracks`, {
+    // Spotify renamed /tracks → /items in February 2026; /tracks returns 403 in dev mode.
+    const res = await apiFetch(`/playlists/${playlistId}/items`, {
         method: 'PUT',
         body: JSON.stringify({ uris: uris.slice(0, 100) }),
     });
@@ -202,7 +202,8 @@ export async function replacePlaylistTracks(playlistId, uris) {
 }
 
 export async function addTracksToPlaylist(playlistId, uris) {
-    return apiFetch(`/playlists/${playlistId}/tracks`, {
+    // Spotify renamed /tracks → /items in February 2026; /tracks returns 403 in dev mode.
+    return apiFetch(`/playlists/${playlistId}/items`, {
         method: 'POST',
         body: JSON.stringify({ uris: uris.slice(0, 100) }),
     });
