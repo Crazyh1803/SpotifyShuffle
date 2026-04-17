@@ -345,6 +345,10 @@ class SpotifyRepository(
                                                     )
                                                     tracksPage.items
                                                         .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                                                        // Only keep tracks where the followed artist is actually
+                                                        // one of the performers. Compilation/soundtrack albums can
+                                                        // surface tracks by completely unrelated artists otherwise.
+                                                        .filter { st -> st.artists.any { it.id == artistId } }
                                                         .forEach { st ->
                                                             found.add(Track(
                                                                 id = st.id,
