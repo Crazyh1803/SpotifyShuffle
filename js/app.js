@@ -265,7 +265,7 @@ async function buildFlow() {
                         if (rateLimited) break;
                         setProgressText(`${scanned + 1} / ${toScan.length}`);
                         try {
-                            const res    = await api.getArtistTopTracks(artist.id);
+                            const res    = await api.getArtistTopTracks(artist.id, user.country);
                             const tracks = (res.tracks || []).map(minifyTrack);
                             for (const t of tracks) addTrack(t);
                             newCache[artist.id] = { tracks, scannedAtMs: Date.now() };
