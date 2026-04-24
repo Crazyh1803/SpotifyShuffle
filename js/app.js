@@ -1,17 +1,17 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=16';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=16';
-import * as api from './api.js?v=16';
-import { buildPlaylist } from './engine.js?v=16';
+import { startAuth, getRedirectUri } from './auth.js?v=17';
+import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=17';
+import * as api from './api.js?v=17';
+import { buildPlaylist } from './engine.js?v=17';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
 // These constants control how many items we process per build.
 
 const MAX_ALBUM_EXPANSION = 50;   // saved albums to expand per build (caps pre-scan API spend)
-const MAX_GAP_BATCH       = 20;   // gap artists scanned per build (keeps first build under ~60 s)
+const MAX_GAP_BATCH       = 50;   // gap artists scanned per build; search-first = 1 call each ~20s
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
@@ -254,6 +254,7 @@ async function buildFlow() {
                 const unscanned = gapArtists.filter(a => !cache[a.id]);
                 const stale     = gapArtists.filter(a => cache[a.id]?.scannedAtMs === 0);
                 const toScan    = [...unscanned, ...stale].slice(0, MAX_GAP_BATCH);
+                console.log(`[gap] total=${gapArtists.length} unscanned=${unscanned.length} stale=${stale.length} toScan=${toScan.length}`);
 
                 if (toScan.length > 0) {
                     setStatus(`Scanning ${toScan.length} artist${toScan.length === 1 ? '' : 's'} for deep cuts…`);
