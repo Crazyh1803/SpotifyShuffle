@@ -1,10 +1,10 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=15';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=15';
-import * as api from './api.js?v=15';
-import { buildPlaylist } from './engine.js?v=15';
+import { startAuth, getRedirectUri } from './auth.js?v=16';
+import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=16';
+import * as api from './api.js?v=16';
+import { buildPlaylist } from './engine.js?v=16';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -270,51 +270,11 @@ async function buildFlow() {
 
                         const found = [];
 
-                        // ── Strategy 1: album-based (preferred) ──────────────────────
-                        // Picks 2 random albums/singles, fetches their full track lists,
-                        // keeps only tracks where this artist is a credited performer.
-                        // Pass user.country — Spotify Feb 2026 deprecated token-inferred market.
-                        try {
-                            const albumsRes = await api.getArtistAlbums(artist.id, 'album,single', 20, user.country);
-                            const albums = (albumsRes.items || []).sort(() => Math.random() - 0.5).slice(0, 2);
-                            for (const album of albums) {
-                                try {
-                                    const tracksRes = await api.getAlbumTracks(album.id, 50, user.country);
-                                    const albumTracks = (tracksRes.items || [])
-                                        .filter(t => t.id && t.uri?.startsWith('spotify:track:'))
-                                        .filter(t => (t.artists || []).some(a => a.id === artist.id))
-                                        .map(t => minifyTrack({ ...t, popularity: 0 }));
-                                    found.push(...albumTracks);
-                                } catch (e) {
-                                    if (e.status === 429) { rateLimited = true; break; }
-                                }
-                            }
-                        } catch (e) {
-                            if (!firstScanError) firstScanError = e;
-                            if (e.status === 429) rateLimited = true;
-                        }
-
-                        // ── Strategy 2: top-tracks fallback ──────────────────────────
-                        // Only tried if album strategy returned nothing and endpoint
-                        // hasn't already 403'd (dev-mode restriction).
-                        if (found.length === 0 && !topTracksBlocked) {
-                            try {
-                                const res = await api.getArtistTopTracks(artist.id, user.country);
-                                found.push(...(res.tracks || []).map(minifyTrack));
-                                firstScanError = null;
-                            } catch (e) {
-                                if (!firstScanError) firstScanError = e;
-                                if (e.status === 403) topTracksBlocked = true;
-                                if (e.status === 429) rateLimited = true;
-                            }
-                        }
-
-                        // ── Strategy 3: search fallback ───────────────────────────────
-                        // Works in Spotify dev mode when both album and top-tracks
-                        // endpoints return 403. Searches for tracks by artist name,
-                        // then filters to the exact artist ID to prevent injecting
-                        // tracks by unrelated artists with similar names.
-                        if (found.length === 0) {
+                        // ── Strategy 1: search (1 API call — fastest, works in all modes) ──
+                        // Searching by artist name + filtering to exact ID is the cheapest
+                        // path and works in Spotify dev mode. Most gap artists get covered
+                        // here with a single call.
+                        if (!rateLimited) {
                             try {
                                 const searchRes = await api.searchTracks(`artist:"${artist.name}"`, 10, user.country);
                                 const filtered = (searchRes.tracks?.items || [])
@@ -322,6 +282,46 @@ async function buildFlow() {
                                     .map(t => minifyTrack(t));
                                 found.push(...filtered);
                                 if (filtered.length > 0) firstScanError = null;
+                            } catch (e) {
+                                if (!firstScanError) firstScanError = e;
+                                if (e.status === 429) rateLimited = true;
+                            }
+                        }
+
+                        // ── Strategy 2: top-tracks fallback (1 call, may 403 in dev mode) ─
+                        if (found.length === 0 && !topTracksBlocked && !rateLimited) {
+                            try {
+                                const res = await api.getArtistTopTracks(artist.id, user.country);
+                                found.push(...(res.tracks || []).map(minifyTrack));
+                                if (found.length > 0) firstScanError = null;
+                            } catch (e) {
+                                if (!firstScanError) firstScanError = e;
+                                if (e.status === 403) topTracksBlocked = true;
+                                if (e.status === 429) rateLimited = true;
+                            }
+                        }
+
+                        // ── Strategy 3: album-based last resort (3+ calls) ────────────────
+                        // More expensive but finds deep cuts when search & top-tracks fail.
+                        // Picks 2 random albums/singles; keeps only tracks credited to this artist.
+                        if (found.length === 0 && !rateLimited) {
+                            try {
+                                const albumsRes = await api.getArtistAlbums(artist.id, 'album,single', 10, user.country);
+                                const albums = (albumsRes.items || []).sort(() => Math.random() - 0.5).slice(0, 2);
+                                for (const album of albums) {
+                                    if (rateLimited) break;
+                                    try {
+                                        const tracksRes = await api.getAlbumTracks(album.id, 50, user.country);
+                                        const albumTracks = (tracksRes.items || [])
+                                            .filter(t => t.id && t.uri?.startsWith('spotify:track:'))
+                                            .filter(t => (t.artists || []).some(a => a.id === artist.id))
+                                            .map(t => minifyTrack({ ...t, popularity: 0 }));
+                                        found.push(...albumTracks);
+                                    } catch (e) {
+                                        if (e.status === 429) { rateLimited = true; break; }
+                                    }
+                                }
+                                if (found.length > 0) firstScanError = null;
                             } catch (e) {
                                 if (!firstScanError) firstScanError = e;
                                 if (e.status === 429) rateLimited = true;
