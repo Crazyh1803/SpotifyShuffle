@@ -1,10 +1,10 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=14';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=14';
-import * as api from './api.js?v=14';
-import { buildPlaylist } from './engine.js?v=14';
+import { startAuth, getRedirectUri } from './auth.js?v=15';
+import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=15';
+import * as api from './api.js?v=15';
+import { buildPlaylist } from './engine.js?v=15';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -332,7 +332,10 @@ async function buildFlow() {
 
                         const dedupedTracks = found.filter((t, i, a) => a.findIndex(x => x.id === t.id) === i);
                         for (const t of dedupedTracks) addTrack(t);
-                        newCache[artist.id] = { tracks: dedupedTracks, scannedAtMs: Date.now() };
+                        // If we were rate-limited and got nothing, mark scannedAtMs=0 so this
+                        // artist is retried on the next build rather than permanently cached empty.
+                        const scannedMs = (rateLimited && dedupedTracks.length === 0) ? 0 : Date.now();
+                        newCache[artist.id] = { tracks: dedupedTracks, scannedAtMs: scannedMs };
                         if (!topIds.has(artist.id) && dedupedTracks.length > 0) {
                             discoveryIds.add(artist.id);
                         }

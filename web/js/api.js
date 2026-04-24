@@ -12,7 +12,7 @@ const BASE = 'https://api.spotify.com/v1';
 // Enforcing a minimum 350 ms gap between every call keeps us well under the limit
 // and means a 100-call build takes ~35 s — acceptable for a first build.
 
-const CALL_GAP_MS = 250;
+const CALL_GAP_MS = 400;
 let _nextCallAt = 0;
 
 async function throttle() {
