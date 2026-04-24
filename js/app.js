@@ -1,10 +1,10 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js';
-import * as api from './api.js';
-import { buildPlaylist } from './engine.js';
+import { startAuth, getRedirectUri } from './auth.js?v=13';
+import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=13';
+import * as api from './api.js?v=13';
+import { buildPlaylist } from './engine.js?v=13';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -333,9 +333,15 @@ async function buildFlow() {
                     gapCache.save(newCache);
                     setProgressText('');
 
-                    // Show scan progress on success if library not fully scanned
-                    const totalGap   = gapArtists.length;
+                    // Report scan progress (inside the scan block — newCache has updated entries)
+                    const totalGap    = gapArtists.length;
                     const totalCached = Object.keys(newCache).filter(id => followedIds.has(id)).length;
+                    window.__scanProgress = { scanned: totalCached, total: totalGap };
+                } else {
+                    // Nothing new to scan this build — report progress from existing cache
+                    const currentCache = gapCache.get();
+                    const totalGap    = gapArtists.length;
+                    const totalCached = Object.keys(currentCache).filter(id => followedIds.has(id)).length;
                     window.__scanProgress = { scanned: totalCached, total: totalGap };
                 }
             }
