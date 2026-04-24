@@ -1,16 +1,16 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=17';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=17';
-import * as api from './api.js?v=17';
-import { buildPlaylist } from './engine.js?v=17';
+import { startAuth, getRedirectUri } from './auth.js?v=18';
+import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=18';
+import * as api from './api.js?v=18';
+import { buildPlaylist } from './engine.js?v=18';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
 // These constants control how many items we process per build.
 
-const MAX_ALBUM_EXPANSION = 50;   // saved albums to expand per build (caps pre-scan API spend)
+const MAX_ALBUM_EXPANSION = 15;   // saved albums to expand per build (keeps Source 3 ≤15 API calls)
 const MAX_GAP_BATCH       = 50;   // gap artists scanned per build; search-first = 1 call each ~20s
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -203,20 +203,24 @@ async function buildFlow() {
             addTrack(t);
         }
 
-        // Source 3: saved album tracks (capped — apiFetch throttles automatically)
+        // Source 3: saved album tracks (capped — keeps this source to ≤MAX_ALBUM_EXPANSION calls)
         const albumsToExpand = savedAlbums.slice(0, MAX_ALBUM_EXPANSION);
         if (albumsToExpand.length > 0) {
             setStatus(`Expanding ${albumsToExpand.length} saved album${albumsToExpand.length === 1 ? '' : 's'}…`);
+            let albumRateLimited = false;
             for (let i = 0; i < albumsToExpand.length; i++) {
+                if (albumRateLimited) break;  // stop hammering on first 429
                 const album = albumsToExpand[i];
                 if (i % 5 === 0) setProgressText(`${i + 1} / ${albumsToExpand.length}`);
                 try {
-                    const res = await api.getAlbumTracks(album.id);
+                    // Pass user.country — Spotify Feb 2026 deprecated token-inferred market.
+                    const res = await api.getAlbumTracks(album.id, 50, user.country);
                     for (const t of res.items) {
                         addTrack({ ...t, album: { id: album.id, name: album.name, images: album.images } });
                     }
-                } catch {
-                    // skip silently — 429 is handled globally in apiFetch
+                } catch (e) {
+                    if (e.status === 429) albumRateLimited = true;
+                    // other errors: skip silently
                 }
             }
             setProgressText('');
