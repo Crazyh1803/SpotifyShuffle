@@ -123,19 +123,22 @@ export async function getArtistTopTracks(artistId, market) {
     return apiFetch(`/artists/${artistId}/top-tracks${q}`);
 }
 
-export async function getArtistAlbums(artistId, includeGroups = 'album,single', limit = 20) {
-    // No explicit market needed — Spotify infers it from the access token.
-    return apiFetch(`/artists/${artistId}/albums?include_groups=${includeGroups}&limit=${limit}`);
+export async function getArtistAlbums(artistId, includeGroups = 'album,single', limit = 20, market) {
+    // Pass explicit market — Spotify's Feb 2026 migration deprecated token-based market inference.
+    const mq = market ? `&market=${encodeURIComponent(market)}` : '';
+    return apiFetch(`/artists/${artistId}/albums?include_groups=${includeGroups}&limit=${limit}${mq}`);
 }
 
-export async function getAlbumTracks(albumId, limit = 50) {
-    // No explicit market needed — Spotify infers it from the access token.
-    // Using market=from_token here can cause 403 for albums not available in the user's region.
-    return apiFetch(`/albums/${albumId}/tracks?limit=${limit}`);
+export async function getAlbumTracks(albumId, limit = 50, market) {
+    // Pass explicit market — avoids 403 for region-locked albums post Feb 2026 migration.
+    const mq = market ? `&market=${encodeURIComponent(market)}` : '';
+    return apiFetch(`/albums/${albumId}/tracks?limit=${limit}${mq}`);
 }
 
-export async function searchTracks(query, limit = 10) {
-    return apiFetch(`/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}&market=from_token`);
+export async function searchTracks(query, limit = 10, market) {
+    // market=from_token was deprecated in Spotify's February 2026 API migration.
+    const mq = market ? `&market=${encodeURIComponent(market)}` : '';
+    return apiFetch(`/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}${mq}`);
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────
