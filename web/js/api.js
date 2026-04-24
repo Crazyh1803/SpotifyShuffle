@@ -12,8 +12,14 @@ const BASE = 'https://api.spotify.com/v1';
 // Enforcing a minimum 350 ms gap between every call keeps us well under the limit
 // and means a 100-call build takes ~35 s — acceptable for a first build.
 
-const CALL_GAP_MS = 400;
-let _nextCallAt = 0;
+const CALL_GAP_MS    = 400;
+const MAX_BACKOFF_MS = 5 * 60 * 1000;           // cap any Retry-After at 5 minutes
+const RL_STORAGE_KEY = 'trueshuffle_rate_limit_until';
+
+// Restore any in-progress rate-limit window from the previous page load.
+// Without this, a page refresh resets _nextCallAt to 0 and the app immediately
+// hammers Spotify again even though the server-side window is still open.
+let _nextCallAt = Math.max(0, parseInt(sessionStorage.getItem(RL_STORAGE_KEY) || '0', 10));
 
 async function throttle() {
     const now  = Date.now();
@@ -47,9 +53,15 @@ async function apiFetch(path, options = {}) {
     });
 
     if (res.status === 429) {
-        // Back off for the duration Spotify asks (Retry-After header, or 10 s default)
+        // Back off for the duration Spotify asks (Retry-After header, or 10 s default).
+        // Cap at MAX_BACKOFF_MS (5 min) — extreme values like 67256 s (18+ hours) appear
+        // when the API client has been hammering; capping means we retry after 5 min and
+        // get another 429 if the window isn't clear yet, rather than freezing the app.
         const retryAfter = parseInt(res.headers.get('Retry-After') || '10', 10);
-        _nextCallAt = Date.now() + retryAfter * 1000 + CALL_GAP_MS;
+        const backoffMs  = Math.min(retryAfter * 1000, MAX_BACKOFF_MS);
+        _nextCallAt = Date.now() + backoffMs + CALL_GAP_MS;
+        // Persist through page refreshes so the user can't reset the window by reloading.
+        sessionStorage.setItem(RL_STORAGE_KEY, String(_nextCallAt));
         throw Object.assign(new Error('Rate limited'), { status: 429, retryAfter });
     }
     if (res.status === 401) {
