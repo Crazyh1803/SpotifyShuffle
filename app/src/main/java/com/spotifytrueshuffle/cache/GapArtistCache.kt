@@ -8,7 +8,14 @@ import com.spotifytrueshuffle.api.Track
 import java.io.File
 
 private const val TAG = "GapArtistCache"
-private const val CACHE_FILE = "gap_artist_cache.json"
+
+// v2: renamed from gap_artist_cache.json to invalidate caches built before the
+// primary-artist filter was added. Pre-v2 entries could contain tracks by
+// unrelated artists (e.g. "Kelsea Ballerini" in a "Scientist" slot) because
+// album tracks were not filtered to require the followed artist as artists[0].
+// Renaming the file means existing installations start a fresh rescan automatically
+// on the first build after upgrading, rather than replaying poisoned data indefinitely.
+private const val CACHE_FILE = "gap_artist_cache_v2.json"
 
 /**
  * One cached entry per gap artist — the result of a single API scan (top-tracks or search).

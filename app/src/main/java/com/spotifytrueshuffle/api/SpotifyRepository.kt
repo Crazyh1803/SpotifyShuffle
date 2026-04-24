@@ -345,6 +345,19 @@ class SpotifyRepository(
                                                     )
                                                     tracksPage.items
                                                         .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                                                        // Only keep tracks where the followed artist is the
+                                                        // PRIMARY (first-listed) artist. Collaborative albums,
+                                                        // soundtracks, and "Various Artists" compilations can
+                                                        // list unrelated artists as artists[0] on individual
+                                                        // tracks — without this filter those artists would
+                                                        // appear in the user's playlist even though the user
+                                                        // doesn't follow them and may never have heard of them.
+                                                        // Using firstOrNull() (not any()) is intentional:
+                                                        // .any() still allows tracks where the followed artist
+                                                        // is only a secondary feature and someone else (e.g.
+                                                        // "Kelsea Ballerini") is artists[0], which causes the
+                                                        // same UX problem from the user's perspective.
+                                                        .filter { st -> st.artists.firstOrNull()?.id == artistId }
                                                         .forEach { st ->
                                                             found.add(Track(
                                                                 id = st.id,
