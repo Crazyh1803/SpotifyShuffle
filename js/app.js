@@ -1,10 +1,10 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=13';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=13';
-import * as api from './api.js?v=13';
-import { buildPlaylist } from './engine.js?v=13';
+import { startAuth, getRedirectUri } from './auth.js?v=14';
+import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=14';
+import * as api from './api.js?v=14';
+import { buildPlaylist } from './engine.js?v=14';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -271,16 +271,15 @@ async function buildFlow() {
                         const found = [];
 
                         // ── Strategy 1: album-based (preferred) ──────────────────────
-                        // Mirrors the Android app's primary gap-fill strategy.
-                        // getArtistTopTracks returns 403 in Spotify dev mode, so albums
-                        // are the reliable path. Picks 2 random albums/singles, fetches
-                        // their full track lists, filters to tracks by this artist.
+                        // Picks 2 random albums/singles, fetches their full track lists,
+                        // keeps only tracks where this artist is a credited performer.
+                        // Pass user.country — Spotify Feb 2026 deprecated token-inferred market.
                         try {
-                            const albumsRes = await api.getArtistAlbums(artist.id, 'album,single', 20);
+                            const albumsRes = await api.getArtistAlbums(artist.id, 'album,single', 20, user.country);
                             const albums = (albumsRes.items || []).sort(() => Math.random() - 0.5).slice(0, 2);
                             for (const album of albums) {
                                 try {
-                                    const tracksRes = await api.getAlbumTracks(album.id);
+                                    const tracksRes = await api.getAlbumTracks(album.id, 50, user.country);
                                     const albumTracks = (tracksRes.items || [])
                                         .filter(t => t.id && t.uri?.startsWith('spotify:track:'))
                                         .filter(t => (t.artists || []).some(a => a.id === artist.id))
@@ -310,6 +309,25 @@ async function buildFlow() {
                             }
                         }
 
+                        // ── Strategy 3: search fallback ───────────────────────────────
+                        // Works in Spotify dev mode when both album and top-tracks
+                        // endpoints return 403. Searches for tracks by artist name,
+                        // then filters to the exact artist ID to prevent injecting
+                        // tracks by unrelated artists with similar names.
+                        if (found.length === 0) {
+                            try {
+                                const searchRes = await api.searchTracks(`artist:"${artist.name}"`, 10, user.country);
+                                const filtered = (searchRes.tracks?.items || [])
+                                    .filter(t => (t.artists || []).some(a => a.id === artist.id))
+                                    .map(t => minifyTrack(t));
+                                found.push(...filtered);
+                                if (filtered.length > 0) firstScanError = null;
+                            } catch (e) {
+                                if (!firstScanError) firstScanError = e;
+                                if (e.status === 429) rateLimited = true;
+                            }
+                        }
+
                         if (found.length > 0) firstScanError = null;
 
                         const dedupedTracks = found.filter((t, i, a) => a.findIndex(x => x.id === t.id) === i);
@@ -323,8 +341,9 @@ async function buildFlow() {
                         await delay(100);
                     }
 
-                    // If every scan attempt failed, surface the error so it's diagnosable
-                    const anySucceeded = Object.keys(newCache).length > Object.keys(cache).length;
+                    // If every scan attempt returned zero tracks, surface the error.
+                    // Check actual track counts — cache keys are always added even on failure.
+                    const anySucceeded = toScan.some(a => (newCache[a.id]?.tracks?.length ?? 0) > 0);
                     if (!anySucceeded && firstScanError) {
                         console.error('Gap scan: all attempts failed. First error:', firstScanError);
                         window.__scanError = firstScanError.message;
