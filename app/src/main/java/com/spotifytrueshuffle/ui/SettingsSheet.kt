@@ -42,7 +42,7 @@ private val DURATION_OPTIONS = listOf(
 
 /**
  * Settings bottom sheet containing all user-configurable options:
- *   • Repeat cooldown slider (1–10 playlists)
+ *   • Repeat cooldown slider (1–50 playlists)
  *   • Discovery mix slider (0 % Familiar ↔ 100 % Discovery)
  *   • Playlist duration segmented buttons (30 min / 1 hr / 1.5 hr / 2 hr / 3 hr)
  *   • Reset cooldown memory
@@ -99,8 +99,8 @@ fun SettingsSheet(
                 Slider(
                     value = cooldownCount.toFloat(),
                     onValueChange = { viewModel.setCooldownCount(it.toInt()) },
-                    valueRange = 1f..10f,
-                    steps = 8,  // integer steps between 1 and 10 (10 - 1 - 1 = 8)
+                    valueRange = 1f..50f,
+                    steps = 48,  // integer steps between 1 and 50 (50 - 1 - 1 = 48)
                     colors = SliderDefaults.colors(
                         thumbColor = SpotifyGreen,
                         activeTrackColor = SpotifyGreen,
@@ -114,7 +114,7 @@ fun SettingsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
-                    Text("10", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text("50", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                 }
             }
 
@@ -129,8 +129,8 @@ fun SettingsSheet(
                 Slider(
                     value = artistCooldownPlaylists.toFloat(),
                     onValueChange = { viewModel.setArtistCooldownPlaylists(it.toInt()) },
-                    valueRange = 1f..20f,
-                    steps = 18,
+                    valueRange = 1f..50f,
+                    steps = 48,  // integer steps between 1 and 50 (50 - 1 - 1 = 48)
                     colors = SliderDefaults.colors(
                         thumbColor = SpotifyGreen,
                         activeTrackColor = SpotifyGreen,
@@ -144,7 +144,7 @@ fun SettingsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
-                    Text("20", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text("50", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                 }
             }
 

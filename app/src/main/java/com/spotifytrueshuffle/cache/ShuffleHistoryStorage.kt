@@ -10,7 +10,7 @@ private const val TAG = "ShuffleHistory"
 private const val HISTORY_FILE = "shuffle_history.json"
 
 /** Maximum number of past playlists to store on disk (supports cooldown up to this value). */
-private const val MAX_STORED = 10
+private const val MAX_STORED = 50
 
 /**
  * A snapshot of one generated playlist: the track IDs and primary artist IDs it contained.
@@ -27,7 +27,7 @@ data class PlaylistSnapshot(
  * playlist snapshots (most-recent first).
  */
 data class ShuffleHistory(
-    /** Number of past playlists during which a track/artist is suppressed (1–10). */
+    /** Number of past playlists during which a track/artist is suppressed (1–50). */
     val cooldownPlaylists: Int = 5,
     /** Most-recent playlist first. Length is capped at MAX_STORED. */
     val recentPlaylists: List<PlaylistSnapshot> = emptyList()

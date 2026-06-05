@@ -90,7 +90,7 @@ class MainViewModel(
     private val _uiState = MutableStateFlow<UiState>(UiState.NotLoggedIn)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    /** How many past playlists an artist/track must skip before being eligible again (1–10). */
+    /** How many past playlists an artist/track must skip before being eligible again (1–50). */
     private val _cooldownCount = MutableStateFlow(historyStorage.load().cooldownPlaylists)
     val cooldownCount: StateFlow<Int> = _cooldownCount.asStateFlow()
 
@@ -175,7 +175,7 @@ class MainViewModel(
 
     /** Updates the cooldown setting and persists it immediately. */
     fun setCooldownCount(n: Int) {
-        val clamped = n.coerceIn(1, 10)
+        val clamped = n.coerceIn(1, 50)
         _cooldownCount.value = clamped
         historyStorage.saveCooldownCount(clamped)
     }
@@ -208,7 +208,7 @@ class MainViewModel(
 
     /** Updates the artist repeat cooldown (1–20 playlists) and persists it. */
     fun setArtistCooldownPlaylists(n: Int) {
-        val clamped = n.coerceIn(1, 20)
+        val clamped = n.coerceIn(1, 50)
         _artistCooldownPlaylists.value = clamped
         appSettings.saveArtistCooldownPlaylists(clamped)
     }
