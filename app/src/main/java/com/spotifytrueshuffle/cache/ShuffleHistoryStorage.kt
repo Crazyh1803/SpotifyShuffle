@@ -76,21 +76,27 @@ class ShuffleHistoryStorage(context: Context) {
     }
 
     /**
-     * Returns the track IDs and artist IDs that are on cooldown based on the
-     * last [n] stored playlists.
+     * Returns the track IDs and artist IDs that are on cooldown.
      *
-     * @param n  The user's cooldown setting (from [ShuffleHistory.cooldownPlaylists]).
+     * Track and artist cooldown windows are independent: a track can be suppressed for
+     * more (or fewer) playlists than an artist. This means both sliders are genuinely
+     * applied — previously both used the same [trackN] value, making [artistN] a no-op.
+     *
+     * @param trackN   Suppress tracks that appeared in the last this many playlists.
+     * @param artistN  Suppress artists that appeared in the last this many playlists.
      * @param history  Pre-loaded history (avoids re-reading disk when caller already has it).
      * @return  Pair of (cooldownTrackIds, cooldownArtistIds)
      */
     fun getCooldownSets(
-        n: Int,
+        trackN: Int,
+        artistN: Int,
         history: ShuffleHistory = load()
     ): Pair<Set<String>, Set<String>> {
-        val recents = history.recentPlaylists.take(n)
-        val trackIds = recents.flatMap { it.trackIds }.toSet()
-        val artistIds = recents.flatMap { it.artistIds }.toSet()
-        Log.d(TAG, "Cooldown sets (last $n playlists): ${trackIds.size} tracks, ${artistIds.size} artists")
+        val all = history.recentPlaylists
+        val trackIds  = all.take(trackN).flatMap  { it.trackIds  }.toSet()
+        val artistIds = all.take(artistN).flatMap { it.artistIds }.toSet()
+        Log.d(TAG, "Cooldown: last $trackN playlists → ${trackIds.size} tracks suppressed; " +
+            "last $artistN playlists → ${artistIds.size} artists suppressed")
         return trackIds to artistIds
     }
 

@@ -521,9 +521,17 @@ class MainViewModel(
 
                 // Load cooldown sets: track/artist IDs from the last N playlists are
                 // suppressed so the same songs/artists don't repeat every build.
+                // Track and artist windows are independent — the artist slider was previously
+                // stored but never actually read here (both used the song-cooldown value).
                 val history = historyStorage.load()
-                val cooldown = historyStorage.getCooldownSets(history.cooldownPlaylists, history)
-                Log.d(TAG, "Cooldown N=${history.cooldownPlaylists}: " +
+                val artistCooldownN = appSettings.load().artistCooldownPlaylists
+                val cooldown = historyStorage.getCooldownSets(
+                    trackN  = history.cooldownPlaylists,
+                    artistN = artistCooldownN,
+                    history = history
+                )
+                Log.d(TAG, "Cooldown: trackN=${history.cooldownPlaylists} " +
+                    "artistN=$artistCooldownN → " +
                     "${cooldown.first.size} tracks, ${cooldown.second.size} artists suppressed")
 
                 val currentBias = _discoveryBias.value
