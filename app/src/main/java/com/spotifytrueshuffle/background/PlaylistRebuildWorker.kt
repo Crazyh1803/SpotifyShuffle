@@ -102,8 +102,13 @@ class PlaylistRebuildWorker(
             }
 
             // Shuffle
-            val history  = historyStorage.load()
-            val cooldown = historyStorage.getCooldownSets(history.cooldownPlaylists, history)
+            val history       = historyStorage.load()
+            val artistCooldownN = settings.artistCooldownPlaylists
+            val cooldown = historyStorage.getCooldownSets(
+                trackN  = history.cooldownPlaylists,
+                artistN = artistCooldownN,
+                history = history
+            )
             val tracks   = shuffleEngine.buildPlaylist(
                 followedArtists   = library.followedArtists,
                 topArtistIds      = topArtistIds,
