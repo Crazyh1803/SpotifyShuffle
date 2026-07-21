@@ -19,6 +19,8 @@ import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.cache.GapArtistCache
+import com.spotifytrueshuffle.cache.PlaylistLogStorage
+import com.spotifytrueshuffle.cache.buildPlaylistLogEntry
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
 import com.spotifytrueshuffle.network.buildApiService
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
@@ -69,6 +71,7 @@ class PlaylistRebuildWorker(
         val artistCache   = ArtistTrackCache(applicationContext)
         val gapArtistCache = GapArtistCache(applicationContext)
         val historyStorage = ShuffleHistoryStorage(applicationContext)
+        val playlistLog    = PlaylistLogStorage(applicationContext)
         val shuffleEngine  = TrueShuffleEngine()
 
         return try {
@@ -142,11 +145,24 @@ class PlaylistRebuildWorker(
                 history.cooldownPlaylists
             )
 
+            // Record the full playlist to the analysis log (source = auto).
+            val logEntry = buildPlaylistLogEntry(
+                tracks = tracks,
+                discoveryArtistIds = buildResult.pool.discoveryArtistIds,
+                topArtistIds = topArtistIds,
+                likedTrackIds = buildResult.pool.likedTrackIds,
+                source = "auto",
+                discoveryBias = settings.discoveryBias,
+                targetDurationMs = settings.playlistDurationMs,
+                cooldownPlaylists = history.cooldownPlaylists
+            )
+            playlistLog.record(logEntry)
+
             val durationMin = tracks.sumOf { it.durationMs.toLong() } / 60_000
-            val artistCount = tracks.flatMap { it.artists }.map { it.id }.toSet().size
-            val tierCCount  = tracks.count { t -> t.artists.firstOrNull()?.id in buildResult.pool.discoveryArtistIds }
-            val tierACount  = tracks.count { t -> t.artists.firstOrNull()?.id in topArtistIds }
-            val tierBCount  = tracks.size - tierCCount - tierACount
+            val artistCount = logEntry.artistCount
+            val tierCCount  = logEntry.tierCCount
+            val tierACount  = logEntry.tierACount
+            val tierBCount  = logEntry.tierBCount
             Log.d(TAG, "Background build done: ${tracks.size} tracks, $durationMin min")
 
             postNotification(tracks.size, durationMin.toInt(), artistCount, tierCCount, tierBCount, tierACount)

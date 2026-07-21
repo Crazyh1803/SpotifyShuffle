@@ -36,6 +36,29 @@ import kotlin.random.Random
  */
 class TrueShuffleEngine {
 
+    companion object {
+        /**
+         * Classifies a track into a playlist tier ("A", "B", or "C") using the same
+         * priority the success-screen breakdown uses: C > A > B. We check ALL of a
+         * track's artists (not just the primary) because gap-fill tracks fetched from
+         * albums sometimes list a featured artist first, which would otherwise
+         * misclassify a discovery track as Tier B.
+         *
+         *   C — any artist is a pure-discovery (gap-fill-only) artist
+         *   A — otherwise, any artist is a top artist
+         *   B — everything else (familiar, non-top)
+         */
+        fun tierOf(
+            track: Track,
+            discoveryArtistIds: Set<String>,
+            topArtistIds: Set<String>
+        ): String = when {
+            track.artists.any { it.id in discoveryArtistIds } -> "C"
+            track.artists.any { it.id in topArtistIds }       -> "A"
+            else                                              -> "B"
+        }
+    }
+
     /**
      * Builds the playlist.
      *

@@ -384,6 +384,29 @@ fun SettingsSheet(
                 )
             }
 
+            // ── Export Playlist Log ──────────────────────────────────────────
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        val fileName = viewModel.exportPlaylistLog(context)
+                        withContext(Dispatchers.Main) {
+                            if (fileName != null) {
+                                Toast.makeText(context, "Playlist log saved to Downloads: $fileName", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "No playlists recorded yet", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Export playlist log to Downloads",
+                    color = SpotifyLightGray.copy(alpha = 0.7f),
+                    fontSize = 14.sp
+                )
+            }
+
             HorizontalDivider(
                 color = SpotifyLightGray.copy(alpha = 0.15f),
                 thickness = 1.dp
@@ -399,6 +422,22 @@ fun SettingsSheet(
             ) {
                 Text(
                     "Reset cooldown memory",
+                    color = SpotifyLightGray.copy(alpha = 0.7f),
+                    fontSize = 14.sp
+                )
+            }
+
+            // ── Clear playlist log ───────────────────────────────────────────
+            TextButton(
+                onClick = {
+                    viewModel.clearPlaylistLog()
+                    Toast.makeText(context, "Playlist log cleared", Toast.LENGTH_SHORT).show()
+                    onDismiss()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Clear playlist log",
                     color = SpotifyLightGray.copy(alpha = 0.7f),
                     fontSize = 14.sp
                 )

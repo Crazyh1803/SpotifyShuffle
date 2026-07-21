@@ -24,6 +24,8 @@ import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.cache.GapArtistCache
+import com.spotifytrueshuffle.cache.PlaylistLogStorage
+import com.spotifytrueshuffle.cache.buildPlaylistLogEntry
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +61,7 @@ class MainViewModel(
     private val historyStorage: ShuffleHistoryStorage,
     private val appSettings: AppSettingsStorage,
     private val gapArtistCache: GapArtistCache,
+    private val playlistLog: PlaylistLogStorage,
     private val appContext: Context
 ) : ViewModel() {
 
@@ -379,6 +382,107 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Exports the recorded playlist log to Downloads for offline analysis, writing two
+     * files: a structured `.json` (lossless source of truth) and a flat `.csv` with one
+     * row per track (build-level fields repeated per row) that opens directly in
+     * Sheets/Excel/pandas. Contains no OAuth tokens or Client ID.
+     *
+     * @return the CSV file name on success, or null if the log is empty or the write fails.
+     */
+    suspend fun exportPlaylistLog(context: Context): String? = withContext(Dispatchers.IO) {
+        val log = playlistLog.load()
+        if (log.entries.isEmpty()) return@withContext null
+
+        val ts       = java.time.LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+        val csvName  = "trueshuffle_playlists_$ts.csv"
+        val jsonName = "trueshuffle_playlists_$ts.json"
+
+        // Flat CSV: one row per track, with the owning build's metadata repeated per row.
+        val header = listOf(
+            "build_timestamp", "source", "discovery_bias", "target_duration_min",
+            "cooldown_playlists", "build_track_count", "build_artist_count",
+            "build_tier_a", "build_tier_b", "build_tier_c",
+            "track_name", "artist_name", "album_name", "release_date",
+            "popularity", "duration_ms", "tier", "liked", "track_id", "artist_id"
+        )
+        val rows = buildList {
+            add(header.joinToString(","))
+            log.entries.forEach { e ->
+                e.tracks.forEach { t ->
+                    add(listOf(
+                        e.timestampIso, e.source, e.discoveryBias.toString(),
+                        (e.targetDurationMs / 60_000).toString(), e.cooldownPlaylists.toString(),
+                        e.trackCount.toString(), e.artistCount.toString(),
+                        e.tierACount.toString(), e.tierBCount.toString(), e.tierCCount.toString(),
+                        csvCell(t.trackName), csvCell(t.artistName), csvCell(t.albumName),
+                        csvCell(t.releaseDate ?: ""), t.popularity.toString(), t.durationMs.toString(),
+                        t.tier, t.liked.toString(), t.trackId, t.artistId
+                    ).joinToString(","))
+                }
+            }
+        }
+        val csv  = rows.joinToString("\n")
+        val json = playlistLog.toJson(log)
+
+        val csvOk  = writeToDownloads(context, csvName, "text/csv", csv)
+        val jsonOk = writeToDownloads(context, jsonName, "application/json", json)
+        if (csvOk && jsonOk) csvName else null
+    }
+
+    /** Clears all recorded playlists from the analysis log. */
+    fun clearPlaylistLog() {
+        playlistLog.clear()
+        Log.d(TAG, "Playlist log cleared by user")
+    }
+
+    /** Escapes a value for CSV: wraps in quotes and doubles inner quotes if it contains , " or newline. */
+    private fun csvCell(value: String): String =
+        if (value.any { it == ',' || it == '"' || it == '\n' || it == '\r' })
+            "\"${value.replace("\"", "\"\"")}\""
+        else value
+
+    /**
+     * Writes [content] to the device Downloads folder as [fileName].
+     * Uses MediaStore on API 29+ and the legacy public-directory path below that —
+     * the same approach as [exportArtistList]/[exportDiagnostics].
+     */
+    private fun writeToDownloads(
+        context: Context,
+        fileName: String,
+        mimeType: String,
+        content: String
+    ): Boolean = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = context.contentResolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+            )
+            if (uri == null) {
+                false
+            } else {
+                context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                context.contentResolver.update(uri, values, null, null)
+                true
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            dir.mkdirs()
+            File(dir, fileName).writeText(content)
+            true
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Write to Downloads failed for $fileName", e)
+        false
+    }
+
     // ── Auth ─────────────────────────────────────────────────────────────────
 
     fun handleAuthCallback(code: String) {
@@ -557,23 +661,26 @@ class MainViewModel(
                 val playlistArtistIds = tracks.flatMap { it.artists }.map { it.id }.distinct()
                 historyStorage.recordPlaylist(playlistTrackIds, playlistArtistIds, history.cooldownPlaylists)
 
-                // Count tier membership for the success screen breakdown.
-                // We check ALL of a track's artists (not just the first) because gap-fill
-                // tracks fetched from albums sometimes list a featured artist as primary —
-                // using firstOrNull() alone caused discovery tracks to be miscounted as Tier B.
-                // Priority: C > A > B (a track featuring both a top and a discovery artist
-                // is a discovery win and should be credited as such).
-                val tierCCount = tracks.count { track ->
-                    track.artists.any { it.id in trackPool.discoveryArtistIds }
-                }
-                val tierACount = tracks.count { track ->
-                    track.artists.none { it.id in trackPool.discoveryArtistIds } &&
-                    track.artists.any { it.id in topArtistIds }
-                }
-                val tierBCount = tracks.size - tierCCount - tierACount
+                // Build the analysis-log entry (also classifies each track into its tier,
+                // C > A > B priority) and record it. The entry's counts double as the
+                // success-screen breakdown, so the log and the UI can never disagree.
+                val logEntry = buildPlaylistLogEntry(
+                    tracks = tracks,
+                    discoveryArtistIds = trackPool.discoveryArtistIds,
+                    topArtistIds = topArtistIds,
+                    likedTrackIds = trackPool.likedTrackIds,
+                    source = "manual",
+                    discoveryBias = currentBias,
+                    targetDurationMs = currentDurationMs,
+                    cooldownPlaylists = history.cooldownPlaylists
+                )
+                playlistLog.record(logEntry)
 
+                val tierCCount = logEntry.tierCCount
+                val tierACount = logEntry.tierACount
+                val tierBCount = logEntry.tierBCount
+                val artistsRepresented = logEntry.artistCount
                 val totalDurationMs = tracks.sumOf { it.durationMs.toLong() }
-                val artistsRepresented = tracks.flatMap { it.artists }.map { it.id }.toSet().size
 
                 Log.d(TAG, "Tier breakdown: C=$tierCCount, B=$tierBCount, A=$tierACount")
 
@@ -742,9 +849,10 @@ class MainViewModelFactory(
     private val historyStorage: ShuffleHistoryStorage,
     private val appSettings: AppSettingsStorage,
     private val gapArtistCache: GapArtistCache,
+    private val playlistLog: PlaylistLogStorage,
     private val appContext: Context
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache, appContext) as T
+        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache, playlistLog, appContext) as T
 }
