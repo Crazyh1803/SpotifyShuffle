@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "com.spotifytrueshuffle"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.appsbydan.trueshuffle"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 9
-        versionName = "1.8"
+        targetSdk = 36
+        versionCode = 10
+        versionName = "1.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
