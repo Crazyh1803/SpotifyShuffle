@@ -40,6 +40,13 @@ class TrueShuffleEngine {
         /** Tracks shorter than this are treated as fragments/interstitials and filtered out. */
         const val MIN_TRACK_MS = 60_000L
 
+        /**
+         * Tracks longer than this are treated as outliers (silence/joke tracks, sprawling live
+         * jams) and filtered out — a single 30-minute track would blow the duration budget.
+         * Set generously (20 min) so legitimate prog / post-rock epics still qualify.
+         */
+        const val MAX_TRACK_MS = 20L * 60 * 1000
+
         /** Rough average track length, used to estimate how many artists a build needs. */
         private const val AVG_TRACK_MS = 240_000L
 
@@ -109,11 +116,15 @@ class TrueShuffleEngine {
         discoveryBias: Int = 60,
         targetDurationMs: Long = 2L * 60 * 60 * 1000
     ): List<Track> {
-        // Filter out non-music tracks (skits, interludes, etc.) AND very short fragments
-        // (interstitials, joke tracks) from every artist's pool before selection. Falls back
-        // progressively so an artist is never left empty purely because of filtering.
+        // Filter out non-music tracks (skits, interludes, etc.) AND duration outliers — very
+        // short fragments (interstitials, joke tracks) and absurdly long ones (silence tracks,
+        // sprawling live jams that would dominate the playlist). Falls back progressively so an
+        // artist is never left empty purely because of filtering.
         val filteredTracksByArtist = tracksByArtist.mapValues { (_, tracks) ->
-            tracks.filter { !isNonMusicTrack(it.name) && it.durationMs >= MIN_TRACK_MS }
+            tracks.filter {
+                !isNonMusicTrack(it.name) &&
+                    it.durationMs >= MIN_TRACK_MS && it.durationMs <= MAX_TRACK_MS
+            }
                 .ifEmpty { tracks.filter { !isNonMusicTrack(it.name) } }
                 .ifEmpty { tracks }
         }

@@ -15,8 +15,12 @@ import java.util.concurrent.atomic.AtomicInteger
 
 private const val TAG = "SpotifyRepository"
 
-/** Maximum gap artists to scan per build. Keeps each run well under 1 minute. */
-private const val BATCH_SIZE = 100
+/**
+ * Maximum gap artists to scan per build. Kept modest so a full rescan stays under Spotify's
+ * rolling rate-limit window; any artists not reached (or skipped when the rate-limit circuit
+ * opens) simply roll over to the next build.
+ */
+private const val BATCH_SIZE = 60
 
 /**
  * Carries an HTTP error code, the response body, and selected response headers
@@ -311,25 +315,34 @@ class SpotifyRepository(
                 // disable the fallback for every remaining artist in the batch.
                 val topTracksBlocked = AtomicBoolean(false)
                 val consecutive403 = AtomicInteger(0)
+                // Global rate-limit circuit-breaker. Once Spotify returns a 429, we stop starting
+                // new scans this build; any artist not successfully scanned yields null (below) so
+                // it stays UNSCANNED and is retried next build — a throttled run must never be
+                // cached as "scanned, empty", which is what wiped the whole cache before.
+                val rateLimited = AtomicBoolean(false)
                 val semaphore = Semaphore(2)   // 2 concurrent — keeps burst rate well under Spotify's limit
 
-                val scanResults: List<List<Track>> = coroutineScope {
+                // null result = couldn't scan (rate-limited / circuit open) → do NOT cache.
+                val scanResults: List<List<Track>?> = coroutineScope {
                     toScan.mapIndexed { index, artistId ->
                         async {
-                            // Stagger launch: spread starts 100ms apart so we don't slam the API
-                            // with 100 requests simultaneously. Effective rate ≈ 2 req/sec.
-                            delay(index * 100L)
+                            // Stagger launch: spread starts 150ms apart so we don't slam the API.
+                            // Effective sustained rate stays comfortably under Spotify's limit.
+                            delay(index * 150L)
                             semaphore.withPermit {
+                                // Circuit already open — skip without an API call; retry next build.
+                                if (rateLimited.get()) return@withPermit null
+
                                 val artistName = artistNameById[artistId] ?: artistId
                                 onScanProgress?.invoke(artistName, index + 1, toScan.size)
                                 val found = mutableListOf<Track>()
 
                                 // ── Strategy 1: album-based (preferred) ─────────────────────
-                                // Picks 2 random albums/singles from the artist's discography
-                                // and fetches their full track lists. This surfaces genuine
-                                // variety — not just the same 10 popularity-ranked hits every time.
-                                // On each rescan cycle different albums are selected, so the
-                                // cache rotates naturally.
+                                // Picks up to 2 random albums/singles from the artist's discography
+                                // and fetches their track lists. This surfaces genuine variety — not
+                                // just the same popularity-ranked hits every time. Different albums
+                                // are chosen each rescan, so the cache rotates naturally. (Kept at 2
+                                // to bound API call volume; more attempts previously triggered 429s.)
                                 if (market != null) {
                                     try {
                                         val albumsPage = api.getArtistAlbums(
@@ -339,13 +352,7 @@ class SpotifyRepository(
                                             market = market
                                         )
                                         if (albumsPage.items.isNotEmpty()) {
-                                            // Shuffle so we pick different albums each rescan, and
-                                            // keep trying (up to 4) until we actually get some tracks —
-                                            // a single unavailable album shouldn't leave the artist empty.
-                                            var albumsTried = 0
-                                            for (album in albumsPage.items.shuffled()) {
-                                                if (found.size >= 10 || albumsTried >= 4) break
-                                                albumsTried++
+                                            for (album in albumsPage.items.shuffled().take(2)) {
                                                 try {
                                                     val tracksPage = api.getAlbumTracks(
                                                         albumId = album.id,
@@ -372,13 +379,14 @@ class SpotifyRepository(
                                                             ))
                                                         }
                                                 } catch (e: retrofit2.HttpException) {
+                                                    if (e.code() == 429) { rateLimited.set(true); return@withPermit null }
                                                     Log.w(TAG, "getAlbumTracks(${album.id}) ${e.code()} — skipping album")
                                                 }
                                             }
                                         }
                                     } catch (e: retrofit2.HttpException) {
                                         when (e.code()) {
-                                            429  -> return@withPermit found  // rate limit — bail immediately
+                                            429  -> { rateLimited.set(true); return@withPermit null }
                                             else -> Log.w(TAG, "getArtistAlbums($artistId) ${e.code()} — falling back")
                                         }
                                     }
@@ -394,7 +402,7 @@ class SpotifyRepository(
                                         consecutive403.set(0)  // endpoint works — reset the block counter
                                     } catch (e: retrofit2.HttpException) {
                                         when (e.code()) {
-                                            429  -> return@withPermit found
+                                            429  -> { rateLimited.set(true); return@withPermit null }
                                             403  -> if (consecutive403.incrementAndGet() >= 3) {
                                                         topTracksBlocked.set(true)
                                                         Log.w(TAG, "top-tracks blocked after 3 consecutive 403s")
@@ -424,6 +432,7 @@ class SpotifyRepository(
                                                     track.artists.any { it.id == artistId }
                                                 })
                                             } catch (e: retrofit2.HttpException) {
+                                                if (e.code() == 429) { rateLimited.set(true); return@withPermit null }
                                                 Log.w(TAG, "searchTracks($artistId, \"$query\") ${e.code()} — skipping")
                                             }
                                         }
@@ -435,7 +444,7 @@ class SpotifyRepository(
                                         "($artistId) — album/top-tracks/search all returned nothing")
                                 }
 
-                                found
+                                found  // non-null = genuinely scanned (may be empty)
                             }
                         }
                     }.awaitAll()
@@ -444,24 +453,31 @@ class SpotifyRepository(
                 // Merge scan results into pool and build newlyScanned map.
                 // Shuffle + take(40) so we store a randomised sample rather than the first N
                 // tracks from whatever album happened to come back first.
+                var rateLimitedSkips = 0
                 toScan.zip(scanResults).forEach { (artistId, tracks) ->
+                    // null = rate-limited / circuit open → NOT scanned. Leave it out of
+                    // newlyScanned so scannedAtMs stays 0 and it's retried next build. This is
+                    // the key fix: a throttled run no longer poisons the cache with false empties.
+                    if (tracks == null) {
+                        rateLimitedSkips++
+                        return@forEach
+                    }
                     val isDiscovery = artistId !in topArtistIds
-                    // Always mark as scanned (nowMs) even when tracks is empty.
-                    // Empty means either no accessible tracks or a 429 skip — either way,
-                    // retrying every single build wastes API calls and freezes the progress
-                    // counter. These artists will be re-tried on the next explicit rescan
-                    // (user taps "Scan for new tracks") or when the auto-rescan interval fires.
-                    val scannedAtMs = nowMs
+                    // Genuinely scanned (possibly empty). Stamp nowMs so we don't re-hammer this
+                    // artist every build; a real empty is retried on the next explicit rescan.
                     val dedupedTracks = tracks.distinctBy { it.id }.shuffled().take(40)
                     newlyScanned[artistId] = GapArtistEntry(
                         tracks = dedupedTracks,
                         isDiscovery = isDiscovery,
-                        scannedAtMs = scannedAtMs
+                        scannedAtMs = nowMs
                     )
                     if (dedupedTracks.isNotEmpty()) {
                         dedupedTracks.forEach { addTrackForArtist(it, artistId) }
                         if (isDiscovery) discoveryArtistIds.add(artistId)
                     }
+                }
+                if (rateLimitedSkips > 0) {
+                    Log.w(TAG, "Rate-limited: $rateLimitedSkips artists left unscanned this build (will retry next build)")
                 }
             }
 
