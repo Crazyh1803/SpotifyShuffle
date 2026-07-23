@@ -396,6 +396,18 @@ private fun SuccessContent(
             }
         }
 
+        // ── Rate-limit notice ────────────────────────────────────────────────
+        if (state.rateLimited) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Spotify rate limit reached — discovery scanning will resume on a " +
+                    "later build. Give it a few minutes between builds.",
+                color = SpotifyLightGray.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center
+            )
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
         SpotifyButton(
             text = "Open in Spotify",

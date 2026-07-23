@@ -24,6 +24,7 @@ import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.cache.GapArtistCache
+import com.spotifytrueshuffle.cache.LibraryTrackCache
 import com.spotifytrueshuffle.cache.PlaylistLogStorage
 import com.spotifytrueshuffle.cache.buildPlaylistLogEntry
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
@@ -44,6 +45,9 @@ import java.time.format.DateTimeFormatter
 private const val TAG      = "MainViewModel"
 private const val WORK_TAG = "auto_rebuild"
 
+/** How long the cached liked-songs + saved-albums pool stays fresh before a re-fetch (7 days). */
+private const val LIBRARY_CACHE_TTL_MS = 7L * 24 * 60 * 60 * 1000
+
 /**
  * Tracks incremental gap-artist scan progress across builds.
  * [isComplete] is true once all followed artists have been scanned at least once.
@@ -62,6 +66,7 @@ class MainViewModel(
     private val appSettings: AppSettingsStorage,
     private val gapArtistCache: GapArtistCache,
     private val playlistLog: PlaylistLogStorage,
+    private val libraryTrackCache: LibraryTrackCache,
     private val appContext: Context
 ) : ViewModel() {
 
@@ -85,7 +90,9 @@ class MainViewModel(
             /** Number of tracks from Tier B (familiar non-top artists). */
             val tierBCount: Int = 0,
             /** Number of tracks from Tier A (top artists). */
-            val tierACount: Int = 0
+            val tierACount: Int = 0,
+            /** True if Spotify throttled gap-fill this build, so discovery scanning is incomplete. */
+            val rateLimited: Boolean = false
         ) : UiState()
         data class Error(val message: String) : UiState()
     }
@@ -236,6 +243,7 @@ class MainViewModel(
      */
     fun rescanAllTracks() {
         gapArtistCache.clearTimestamps()
+        libraryTrackCache.clear()   // also refresh liked songs / saved albums
         _scanProgress.value = null  // Reset progress display so user sees it refresh
         appSettings.saveLastScanProgress(-1, -1)
         buildPlaylist()
@@ -493,6 +501,7 @@ class MainViewModel(
         tokenStorage.clearAll()
         artistCache.clear()
         gapArtistCache.clear()
+        libraryTrackCache.clear()
         historyStorage.clearHistory()
         WorkManager.getInstance(appContext).cancelUniqueWork(WORK_TAG)
         _scanProgress.value = null
@@ -558,12 +567,19 @@ class MainViewModel(
                 val rescanThresholdMs = if (rescanIntervalDays == 0) Long.MAX_VALUE
                                         else rescanIntervalDays * 86_400_000L
 
+                // Reuse the cached liked-songs + saved-albums pool when it's fresh, so a repeat
+                // build makes almost no API calls (leaving quota for gap-fill). Stale/absent →
+                // pass null so the repository re-fetches and returns a new pool to persist.
+                val cachedLibraryPool = libraryTrackCache.load()
+                    ?.takeIf { System.currentTimeMillis() - it.fetchedAtMs < LIBRARY_CACHE_TTL_MS }
+
                 val buildResult = repository.buildTrackPool(
                     followedArtists = library.followedArtists,
                     topArtistIds = topArtistIds,
                     market = user.country,
                     cachedEntries = cachedEntries,
                     rescanThresholdMs = rescanThresholdMs,
+                    cachedLibraryPool = cachedLibraryPool,
                     onScanProgress = { artistName, scanned, total ->
                         // Update the building message with the current artist name so the
                         // user can see it scanning — matches the behaviour from earlier versions.
@@ -578,6 +594,8 @@ class MainViewModel(
                 if (buildResult.newlyScanned.isNotEmpty()) {
                     gapArtistCache.save(cachedEntries + buildResult.newlyScanned)
                 }
+                // Persist a freshly-fetched library pool so the next build can skip the heavy calls.
+                buildResult.newLibraryPool?.let { libraryTrackCache.save(it) }
 
                 // Update scan progress for the success screen.
                 // Artists covered by sources 1-3 (liked songs / albums / top tracks) are always
@@ -681,7 +699,8 @@ class MainViewModel(
                     artistCount = artistsRepresented,
                     tierCCount = tierCCount,
                     tierBCount = tierBCount,
-                    tierACount = tierACount
+                    tierACount = tierACount,
+                    rateLimited = buildResult.rateLimited
                 )
 
             } catch (e: Exception) {
@@ -700,6 +719,7 @@ class MainViewModel(
         viewModelScope.launch {
             try {
                 buildArtistLibrary(progressStep = 1, progressTotal = 2)
+                libraryTrackCache.clear()   // force liked/album re-fetch on next build
                 _uiState.value = loggedInState()
             } catch (e: Exception) {
                 Log.e(TAG, "Refresh artists failed", e)
@@ -840,9 +860,10 @@ class MainViewModelFactory(
     private val appSettings: AppSettingsStorage,
     private val gapArtistCache: GapArtistCache,
     private val playlistLog: PlaylistLogStorage,
+    private val libraryTrackCache: LibraryTrackCache,
     private val appContext: Context
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache, playlistLog, appContext) as T
+        MainViewModel(authManager, repository, tokenStorage, shuffleEngine, trackCache, historyStorage, appSettings, gapArtistCache, playlistLog, libraryTrackCache, appContext) as T
 }

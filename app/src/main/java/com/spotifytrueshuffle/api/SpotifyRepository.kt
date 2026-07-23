@@ -4,6 +4,7 @@ import android.util.Log
 import com.spotifytrueshuffle.auth.SpotifyAuthManager
 import com.spotifytrueshuffle.auth.TokenStorage
 import com.spotifytrueshuffle.cache.GapArtistEntry
+import com.spotifytrueshuffle.cache.LibraryTrackPool
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -64,12 +65,17 @@ data class TrackPool(
  * @param newlyScanned    Entries fetched during this build (caller merges + saves to disk).
  * @param totalGapArtists Total number of gap artists (covered by cache + newly scanned + skipped).
  * @param totalCached     Gap artists already in the cache before this build started.
+ * @param rateLimited     True if Spotify throttled gap-fill this build (discovery incomplete).
+ * @param newLibraryPool  Freshly-fetched liked-songs + saved-albums pool to persist, or null
+ *                        when this build was served from the library cache (nothing to save).
  */
 data class TrackPoolBuildResult(
     val pool: TrackPool,
     val newlyScanned: Map<String, GapArtistEntry>,
     val totalGapArtists: Int,
-    val totalCached: Int
+    val totalCached: Int,
+    val rateLimited: Boolean = false,
+    val newLibraryPool: LibraryTrackPool? = null
 )
 
 /**
@@ -172,6 +178,10 @@ class SpotifyRepository(
      * @param batchSize           Max new artists to scan this build (default [BATCH_SIZE]).
      * @param rescanThresholdMs   Entries older than this (ms) are treated as stale and re-scanned
      *                            after all completely-unscanned artists. Long.MAX_VALUE = manual only.
+     * @param cachedLibraryPool   Previously-fetched liked-songs + saved-albums pool. When non-null
+     *                            it is reused instead of re-fetching those (heavy) sources — the
+     *                            main lever for staying under Spotify's rate limit. Pass null to
+     *                            fetch fresh (result carries the new pool in [TrackPoolBuildResult.newLibraryPool]).
      */
     suspend fun buildTrackPool(
         followedArtists: List<Artist> = emptyList(),
@@ -180,6 +190,7 @@ class SpotifyRepository(
         cachedEntries: Map<String, GapArtistEntry> = emptyMap(),
         batchSize: Int = BATCH_SIZE,
         rescanThresholdMs: Long = Long.MAX_VALUE,
+        cachedLibraryPool: LibraryTrackPool? = null,
         /** Called each time a new artist scan starts — artist name, artists scanned so far, total to scan. */
         onScanProgress: ((artistName: String, scanned: Int, total: Int) -> Unit)? = null
     ): TrackPoolBuildResult {
@@ -202,7 +213,8 @@ class SpotifyRepository(
             trackMap.getOrPut(artistId) { mutableListOf() }.add(track)
         }
 
-        // 1. Top tracks — long / medium / short term
+        // 1. Top tracks — long / medium / short term. Always live: only 3 cheap calls, and they
+        //    reflect the user's most recent listening.
         for (range in listOf("long_term", "medium_term", "short_term")) {
             try {
                 api.getTopTracks(timeRange = range, limit = 50).items.forEach { addTrack(it) }
@@ -212,53 +224,82 @@ class SpotifyRepository(
         }
         Log.d(TAG, "After top tracks: ${trackMap.size} artists in pool")
 
-        // 2. Liked songs — fully paginated (no cap).
-        var likedOffset = 0
-        while (true) {
-            try {
-                val page = api.getSavedTracks(limit = 50, offset = likedOffset)
-                page.items.forEach {
-                    addTrack(it.track)
-                    likedTrackIds.add(it.track.id)
-                }
-                likedOffset += page.items.size
-                if (page.next == null || page.items.isEmpty()) break
-            } catch (e: retrofit2.HttpException) {
-                Log.w(TAG, "getSavedTracks(offset=$likedOffset) failed: ${e.code()}")
-                break
+        // ── Sources 2-3: liked songs + saved albums ──────────────────────────────────────────
+        // These are the heavy paginated calls. Serve them from [cachedLibraryPool] when the caller
+        // passes one (fresh); otherwise fetch and build a new pool to persist. [newLibraryPool] is
+        // non-null only when we fetched, signalling the caller to save it.
+        var newLibraryPool: LibraryTrackPool? = null
+        if (cachedLibraryPool != null) {
+            cachedLibraryPool.tracksByArtist.forEach { (artistId, tracks) ->
+                tracks.forEach { addTrackForArtist(it, artistId) }
             }
-        }
-        Log.d(TAG, "After liked songs ($likedOffset tracks): ${trackMap.size} artists in pool")
+            likedTrackIds.addAll(cachedLibraryPool.likedTrackIds)
+            Log.d(TAG, "Library pool from cache: ${cachedLibraryPool.tracksByArtist.size} artists, " +
+                "${cachedLibraryPool.likedTrackIds.size} liked IDs (no liked/album API calls)")
+        } else {
+            // Accumulate liked+album tracks into a separate map (same primary-artist bucketing as
+            // addTrack) so we can persist them for reuse next build.
+            val libraryMap = mutableMapOf<String, MutableList<Track>>()
+            fun addLibraryTrack(track: Track) {
+                val id = track.artists.firstOrNull()?.id ?: return
+                trackMap.getOrPut(id) { mutableListOf() }.add(track)
+                libraryMap.getOrPut(id) { mutableListOf() }.add(track)
+            }
 
-        // 3. Saved albums — fully paginated.
-        try {
-            var albumOffset = 0
-            var albumTrackCount = 0
+            // 2. Liked songs — fully paginated (no cap).
+            var likedOffset = 0
             while (true) {
-                val albumPage = api.getSavedAlbums(limit = 50, offset = albumOffset)
-                for (savedAlbum in albumPage.items) {
-                    val alb = savedAlbum.album
-                    val albumSimple = AlbumSimple(
-                        id = alb.id, name = alb.name,
-                        releaseDate = alb.releaseDate, images = alb.images
-                    )
-                    alb.tracks.items
-                        .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
-                        .forEach { st ->
-                            addTrack(Track(
-                                id = st.id, name = st.name, durationMs = st.durationMs,
-                                popularity = 0, uri = st.uri, artists = st.artists,
-                                album = albumSimple, previewUrl = st.previewUrl
-                            ))
-                            albumTrackCount++
-                        }
+                try {
+                    val page = api.getSavedTracks(limit = 50, offset = likedOffset)
+                    page.items.forEach {
+                        addLibraryTrack(it.track)
+                        likedTrackIds.add(it.track.id)
+                    }
+                    likedOffset += page.items.size
+                    if (page.next == null || page.items.isEmpty()) break
+                } catch (e: retrofit2.HttpException) {
+                    Log.w(TAG, "getSavedTracks(offset=$likedOffset) failed: ${e.code()}")
+                    break
                 }
-                albumOffset += albumPage.items.size
-                if (albumPage.next == null || albumPage.items.isEmpty()) break
             }
-            Log.d(TAG, "After saved albums ($albumTrackCount tracks, $albumOffset albums): ${trackMap.size} artists")
-        } catch (e: retrofit2.HttpException) {
-            Log.w(TAG, "getSavedAlbums failed: ${e.code()}")
+            Log.d(TAG, "After liked songs ($likedOffset tracks): ${trackMap.size} artists in pool")
+
+            // 3. Saved albums — fully paginated.
+            try {
+                var albumOffset = 0
+                var albumTrackCount = 0
+                while (true) {
+                    val albumPage = api.getSavedAlbums(limit = 50, offset = albumOffset)
+                    for (savedAlbum in albumPage.items) {
+                        val alb = savedAlbum.album
+                        val albumSimple = AlbumSimple(
+                            id = alb.id, name = alb.name,
+                            releaseDate = alb.releaseDate, images = alb.images
+                        )
+                        alb.tracks.items
+                            .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                            .forEach { st ->
+                                addLibraryTrack(Track(
+                                    id = st.id, name = st.name, durationMs = st.durationMs,
+                                    popularity = 0, uri = st.uri, artists = st.artists,
+                                    album = albumSimple, previewUrl = st.previewUrl
+                                ))
+                                albumTrackCount++
+                            }
+                    }
+                    albumOffset += albumPage.items.size
+                    if (albumPage.next == null || albumPage.items.isEmpty()) break
+                }
+                Log.d(TAG, "After saved albums ($albumTrackCount tracks, $albumOffset albums): ${trackMap.size} artists")
+            } catch (e: retrofit2.HttpException) {
+                Log.w(TAG, "getSavedAlbums failed: ${e.code()}")
+            }
+
+            newLibraryPool = LibraryTrackPool(
+                tracksByArtist = libraryMap,
+                likedTrackIds = likedTrackIds.toList(),
+                fetchedAtMs = System.currentTimeMillis()
+            )
         }
 
         // 4. Gap fill — followed artists with zero coverage after sources 1-3.
@@ -269,6 +310,7 @@ class SpotifyRepository(
         //    rescanThresholdMs) artists. Scan the next batch, prioritising unscanned first.
         val discoveryArtistIds = mutableSetOf<String>()
         val newlyScanned = mutableMapOf<String, GapArtistEntry>()
+        var gapRateLimited = false
 
         if (followedArtistIds.isNotEmpty()) {
             // All gap artists = followed artists not covered by sources 1-3
@@ -477,6 +519,7 @@ class SpotifyRepository(
                     }
                 }
                 if (rateLimitedSkips > 0) {
+                    gapRateLimited = true
                     Log.w(TAG, "Rate-limited: $rateLimitedSkips artists left unscanned this build (will retry next build)")
                 }
             }
@@ -494,7 +537,9 @@ class SpotifyRepository(
                 ),
                 newlyScanned = newlyScanned,
                 totalGapArtists = totalGapArtists,
-                totalCached = loadedFromCache
+                totalCached = loadedFromCache,
+                rateLimited = gapRateLimited,
+                newLibraryPool = newLibraryPool
             )
         }
 
@@ -509,7 +554,9 @@ class SpotifyRepository(
             ),
             newlyScanned = emptyMap(),
             totalGapArtists = 0,
-            totalCached = 0
+            totalCached = 0,
+            rateLimited = false,
+            newLibraryPool = newLibraryPool
         )
     }
 

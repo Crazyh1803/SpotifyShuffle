@@ -3,6 +3,7 @@ package com.spotifytrueshuffle.network
 import com.spotifytrueshuffle.BuildConfig
 import com.spotifytrueshuffle.SpotifyConfig
 import com.spotifytrueshuffle.api.AuthInterceptor
+import com.spotifytrueshuffle.api.RateLimitInterceptor
 import com.spotifytrueshuffle.api.SpotifyApiService
 import com.spotifytrueshuffle.auth.TokenStorage
 import okhttp3.OkHttpClient
@@ -27,6 +28,9 @@ fun buildApiService(tokenStorage: TokenStorage): SpotifyApiService {
     }
     val client = OkHttpClient.Builder()
         .addInterceptor(AuthInterceptor(tokenStorage))
+        // Retry-After handling wraps the actual call so throttled requests wait & retry
+        // instead of failing; placed after auth so retries carry the Bearer token.
+        .addInterceptor(RateLimitInterceptor())
         .addInterceptor(logging)
         .build()
     return Retrofit.Builder()

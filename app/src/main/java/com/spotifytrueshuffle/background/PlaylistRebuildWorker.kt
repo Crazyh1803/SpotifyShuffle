@@ -19,6 +19,7 @@ import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.cache.GapArtistCache
+import com.spotifytrueshuffle.cache.LibraryTrackCache
 import com.spotifytrueshuffle.cache.PlaylistLogStorage
 import com.spotifytrueshuffle.cache.buildPlaylistLogEntry
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
@@ -28,6 +29,9 @@ import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
 private const val TAG            = "PlaylistRebuildWorker"
 private const val CHANNEL_ID     = "playlist_rebuild"
 private const val NOTIFICATION_ID = 1001
+
+/** Keep in sync with MainViewModel: cached liked-songs + saved-albums pool freshness (7 days). */
+private const val LIBRARY_CACHE_TTL_MS = 7L * 24 * 60 * 60 * 1000
 
 /**
  * WorkManager [CoroutineWorker] that auto-rebuilds the True Shuffle playlist in the background
@@ -72,6 +76,7 @@ class PlaylistRebuildWorker(
         val gapArtistCache = GapArtistCache(applicationContext)
         val historyStorage = ShuffleHistoryStorage(applicationContext)
         val playlistLog    = PlaylistLogStorage(applicationContext)
+        val libraryTrackCache = LibraryTrackCache(applicationContext)
         val shuffleEngine  = TrueShuffleEngine()
 
         return try {
@@ -90,16 +95,20 @@ class PlaylistRebuildWorker(
             val cachedEntries     = gapArtistCache.load()
             val rescanThresholdMs = if (settings.trackRescanIntervalDays == 0) Long.MAX_VALUE
                                     else settings.trackRescanIntervalDays * 86_400_000L
+            val cachedLibraryPool = libraryTrackCache.load()
+                ?.takeIf { System.currentTimeMillis() - it.fetchedAtMs < LIBRARY_CACHE_TTL_MS }
             val buildResult = repository.buildTrackPool(
                 followedArtists   = library.followedArtists,
                 topArtistIds      = topArtistIds,
                 market            = user.country,
                 cachedEntries     = cachedEntries,
-                rescanThresholdMs = rescanThresholdMs
+                rescanThresholdMs = rescanThresholdMs,
+                cachedLibraryPool = cachedLibraryPool
             )
             if (buildResult.newlyScanned.isNotEmpty()) {
                 gapArtistCache.save(cachedEntries + buildResult.newlyScanned)
             }
+            buildResult.newLibraryPool?.let { libraryTrackCache.save(it) }
             if (buildResult.pool.tracksByArtist.isEmpty()) {
                 Log.w(TAG, "Empty track pool — skipping"); return Result.success()
             }
