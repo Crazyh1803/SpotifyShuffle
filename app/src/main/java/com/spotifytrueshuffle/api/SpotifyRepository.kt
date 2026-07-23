@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 private const val TAG = "SpotifyRepository"
 
@@ -305,7 +306,11 @@ class SpotifyRepository(
                 "scanning ${toScan.size} this build")
 
             if (toScan.isNotEmpty()) {
+                // Only give up on the top-tracks endpoint after several *consecutive* 403s
+                // (a real dev-mode block), not the first one — an isolated 403 shouldn't
+                // disable the fallback for every remaining artist in the batch.
                 val topTracksBlocked = AtomicBoolean(false)
+                val consecutive403 = AtomicInteger(0)
                 val semaphore = Semaphore(2)   // 2 concurrent — keeps burst rate well under Spotify's limit
 
                 val scanResults: List<List<Track>> = coroutineScope {
@@ -334,9 +339,13 @@ class SpotifyRepository(
                                             market = market
                                         )
                                         if (albumsPage.items.isNotEmpty()) {
-                                            // Shuffle so we pick different albums each rescan
-                                            val selectedAlbums = albumsPage.items.shuffled().take(2)
-                                            for (album in selectedAlbums) {
+                                            // Shuffle so we pick different albums each rescan, and
+                                            // keep trying (up to 4) until we actually get some tracks —
+                                            // a single unavailable album shouldn't leave the artist empty.
+                                            var albumsTried = 0
+                                            for (album in albumsPage.items.shuffled()) {
+                                                if (found.size >= 10 || albumsTried >= 4) break
+                                                albumsTried++
                                                 try {
                                                     val tracksPage = api.getAlbumTracks(
                                                         albumId = album.id,
@@ -382,34 +391,48 @@ class SpotifyRepository(
                                 if (found.isEmpty() && !topTracksBlocked.get()) {
                                     try {
                                         found.addAll(api.getArtistTopTracks(artistId, market = market).tracks)
+                                        consecutive403.set(0)  // endpoint works — reset the block counter
                                     } catch (e: retrofit2.HttpException) {
                                         when (e.code()) {
                                             429  -> return@withPermit found
-                                            403  -> topTracksBlocked.set(true)
+                                            403  -> if (consecutive403.incrementAndGet() >= 3) {
+                                                        topTracksBlocked.set(true)
+                                                        Log.w(TAG, "top-tracks blocked after 3 consecutive 403s")
+                                                    }
                                             else -> Log.w(TAG, "getArtistTopTracks($artistId) ${e.code()}")
                                         }
                                     }
                                 }
 
                                 // ── Strategy 3: search fallback ─────────────────────────────
-                                // Last resort — fires when top-tracks is blocked (403) and
-                                // album fetch gave nothing.
+                                // Last resort — fires when top-tracks is blocked/empty and album
+                                // fetch gave nothing. Tries the strict artist filter first, then
+                                // the bare name (helps non-Latin / punctuated artist names that
+                                // the quoted artist: filter misses).
                                 if (found.isEmpty() && market != null) {
                                     val name = artistNameById[artistId]
                                     if (name != null) {
-                                        try {
-                                            val results = api.searchTracks(
-                                                query = "artist:\"$name\"",
-                                                market = market,
-                                                limit = 10
-                                            ).tracks.items
-                                            found.addAll(results.filter { track ->
-                                                track.artists.any { it.id == artistId }
-                                            })
-                                        } catch (e: retrofit2.HttpException) {
-                                            Log.w(TAG, "searchTracks($artistId) ${e.code()} — skipping")
+                                        for (query in listOf("artist:\"$name\"", name)) {
+                                            if (found.isNotEmpty()) break
+                                            try {
+                                                val results = api.searchTracks(
+                                                    query = query,
+                                                    market = market,
+                                                    limit = 10
+                                                ).tracks.items
+                                                found.addAll(results.filter { track ->
+                                                    track.artists.any { it.id == artistId }
+                                                })
+                                            } catch (e: retrofit2.HttpException) {
+                                                Log.w(TAG, "searchTracks($artistId, \"$query\") ${e.code()} — skipping")
+                                            }
                                         }
                                     }
+                                }
+
+                                if (found.isEmpty()) {
+                                    Log.d(TAG, "Gap scan empty for ${artistNameById[artistId] ?: artistId} " +
+                                        "($artistId) — album/top-tracks/search all returned nothing")
                                 }
 
                                 found

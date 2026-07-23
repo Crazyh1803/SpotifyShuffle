@@ -27,8 +27,6 @@ data class AppSettings(
     val autoRebuildDays: Int = 0,
     val discoveryBias: Int = 60,
     val playlistDurationMs: Long = 2L * 60 * 60 * 1000,
-    /** How many playlists must pass before the same artist can appear again (1–20). */
-    val artistCooldownPlaylists: Int = 2,
     val trackRescanIntervalDays: Int = 30,
     /** Last known scan progress — persisted so the status survives app restarts.
      *  -1 means no build has completed yet. */
@@ -77,10 +75,6 @@ class AppSettingsStorage(context: Context) {
 
     fun saveAutoRebuildDays(days: Int) {
         save(load().copy(autoRebuildDays = days))
-    }
-
-    fun saveArtistCooldownPlaylists(n: Int) {
-        save(load().copy(artistCooldownPlaylists = n))
     }
 
     fun saveTrackRescanIntervalDays(days: Int) {

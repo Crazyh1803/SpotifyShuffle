@@ -95,6 +95,18 @@ class ShuffleHistoryStorage(context: Context) {
     }
 
     /**
+     * Returns the primary-artist ID sets of the last [n] stored playlists, MOST-RECENT FIRST
+     * (one set per playlist). Unlike [getCooldownSets], this preserves per-playlist recency so
+     * the shuffle engine can apply an adaptive cooldown that suppresses the newest playlists
+     * first and stops before the fresh artist pool would starve.
+     */
+    fun getRecentArtistSets(
+        n: Int,
+        history: ShuffleHistory = load()
+    ): List<Set<String>> =
+        history.recentPlaylists.take(n).map { it.artistIds.toSet() }
+
+    /**
      * Clears the recent playlist history (resets cooldown suppression) while keeping
      * the user's cooldown count preference intact.
      */

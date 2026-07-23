@@ -127,10 +127,6 @@ class MainViewModel(
     private val _autoRebuildDays = MutableStateFlow(appSettings.load().autoRebuildDays)
     val autoRebuildDays: StateFlow<Int> = _autoRebuildDays.asStateFlow()
 
-    /** How many playlists must pass before the same artist can appear again (1–20). */
-    private val _artistCooldownPlaylists = MutableStateFlow(appSettings.load().artistCooldownPlaylists)
-    val artistCooldownPlaylists: StateFlow<Int> = _artistCooldownPlaylists.asStateFlow()
-
     init {
         val settings = appSettings.load()
         _uiState.value = when {
@@ -207,13 +203,6 @@ class MainViewModel(
         val clamped = days.coerceIn(0, 365)
         _trackRescanIntervalDays.value = clamped
         appSettings.saveTrackRescanIntervalDays(clamped)
-    }
-
-    /** Updates the artist repeat cooldown (1–20 playlists) and persists it. */
-    fun setArtistCooldownPlaylists(n: Int) {
-        val clamped = n.coerceIn(1, 20)
-        _artistCooldownPlaylists.value = clamped
-        appSettings.saveArtistCooldownPlaylists(clamped)
     }
 
     /**
@@ -343,7 +332,7 @@ class MainViewModel(
             add("--- Settings ---")
             add("Discovery bias         : ${settings.discoveryBias}%")
             add("Playlist duration      : ${settings.playlistDurationMs / 60_000} min")
-            add("Artist cooldown        : ${settings.artistCooldownPlaylists} playlists")
+            add("Repeat cooldown        : ${historyStorage.load().cooldownPlaylists} playlists")
             add("Auto-rebuild           : ${if (settings.autoRebuildDays == 0) "Off" else "Every ${settings.autoRebuildDays} days"}")
             add("Track rescan interval  : ${if (settings.trackRescanIntervalDays == 0) "Manual" else "Every ${settings.trackRescanIntervalDays} days"}")
             add("")
@@ -626,9 +615,10 @@ class MainViewModel(
                 // Load cooldown sets: track/artist IDs from the last N playlists are
                 // suppressed so the same songs/artists don't repeat every build.
                 val history = historyStorage.load()
-                val cooldown = historyStorage.getCooldownSets(history.cooldownPlaylists, history)
-                Log.d(TAG, "Cooldown N=${history.cooldownPlaylists}: " +
-                    "${cooldown.first.size} tracks, ${cooldown.second.size} artists suppressed")
+                val cooldownTrackIds = historyStorage.getCooldownSets(history.cooldownPlaylists, history).first
+                val recentArtistSets = historyStorage.getRecentArtistSets(history.cooldownPlaylists, history)
+                Log.d(TAG, "Cooldown N=${history.cooldownPlaylists}: ${cooldownTrackIds.size} tracks suppressed, " +
+                    "${recentArtistSets.size} recent playlists for adaptive artist cooldown")
 
                 val currentBias = _discoveryBias.value
                 val currentDurationMs = _playlistDurationMs.value
@@ -640,8 +630,8 @@ class MainViewModel(
                     tracksByArtist = tracksByArtist,
                     discoveryArtistIds = trackPool.discoveryArtistIds,
                     likedTrackIds = trackPool.likedTrackIds,
-                    cooldownTrackIds = cooldown.first,
-                    cooldownArtistIds = cooldown.second,
+                    recentArtistSets = recentArtistSets,
+                    cooldownTrackIds = cooldownTrackIds,
                     discoveryBias = currentBias,
                     targetDurationMs = currentDurationMs
                 )

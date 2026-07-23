@@ -37,6 +37,23 @@ import kotlin.random.Random
 class TrueShuffleEngine {
 
     companion object {
+        /** Tracks shorter than this are treated as fragments/interstitials and filtered out. */
+        const val MIN_TRACK_MS = 60_000L
+
+        /** Rough average track length, used to estimate how many artists a build needs. */
+        private const val AVG_TRACK_MS = 240_000L
+
+        /** Keep at least neededArtists × this many fresh artists before applying cooldown. */
+        private const val FRESH_HEADROOM = 2
+
+        /**
+         * Effective popularity assigned to unknown (0) tracks so they sort as *average*
+         * rather than as the deepest cut. Album- and gap-sourced simplified tracks have no
+         * popularity field and default to 0; without this they always win the least-popular
+         * bias over tracks with real, genuinely-low popularity.
+         */
+        private const val NEUTRAL_POPULARITY = 35
+
         /**
          * Classifies a track into a playlist tier ("A", "B", or "C") using the same
          * priority the success-screen breakdown uses: C > A > B. We check ALL of a
@@ -70,9 +87,10 @@ class TrueShuffleEngine {
      * @param likedTrackIds      Track IDs from the user's liked-songs list. For non-top
      *                           artists, selectTrack prefers tracks NOT in this set, so
      *                           the playlist surfaces unfamiliar songs where possible.
-     * @param cooldownArtistIds  Artist IDs that appeared in the last N playlists. These
-     *                           artists are excluded from the normal ordering and appended
-     *                           at the end so they only appear if the playlist runs short.
+     * @param recentArtistSets   Primary-artist IDs from recent playlists, MOST-RECENT FIRST
+     *                           (one set per past playlist). Used to compute an adaptive
+     *                           artist cooldown that never starves the fresh pool and never
+     *                           suppresses scarce Tier C artists — see [adaptiveArtistCooldown].
      * @param cooldownTrackIds   Track IDs that appeared in the last N playlists. Even if
      *                           a cooldown artist is used as a fallback, their cooldown
      *                           tracks are de-prioritised in selectTrack.
@@ -86,17 +104,18 @@ class TrueShuffleEngine {
         tracksByArtist: Map<String, List<Track>>,
         discoveryArtistIds: Set<String> = emptySet(),
         likedTrackIds: Set<String> = emptySet(),
-        cooldownArtistIds: Set<String> = emptySet(),
+        recentArtistSets: List<Set<String>> = emptyList(),
         cooldownTrackIds: Set<String> = emptySet(),
         discoveryBias: Int = 60,
         targetDurationMs: Long = 2L * 60 * 60 * 1000
     ): List<Track> {
-        // Filter out non-music tracks (skits, interludes, etc.) from every artist's pool
-        // before any selection logic runs. Falls back to the unfiltered list for artists
-        // where filtering would leave them with zero tracks.
+        // Filter out non-music tracks (skits, interludes, etc.) AND very short fragments
+        // (interstitials, joke tracks) from every artist's pool before selection. Falls back
+        // progressively so an artist is never left empty purely because of filtering.
         val filteredTracksByArtist = tracksByArtist.mapValues { (_, tracks) ->
-            val filtered = tracks.filter { !isNonMusicTrack(it.name) }
-            filtered.ifEmpty { tracks }  // never leave an artist empty due to filtering
+            tracks.filter { !isNonMusicTrack(it.name) && it.durationMs >= MIN_TRACK_MS }
+                .ifEmpty { tracks.filter { !isNonMusicTrack(it.name) } }
+                .ifEmpty { tracks }
         }
 
         // Only keep artists for whom we actually have tracks
@@ -104,6 +123,19 @@ class TrueShuffleEngine {
             filteredTracksByArtist[it.id]?.isNotEmpty() == true
         }
         if (artistsWithTracks.isEmpty()) return emptyList()
+
+        // Adaptive artist cooldown: suppress artists from the most-recent playlists first,
+        // but stop before the fresh pool would starve, and never suppress Tier C (discovery)
+        // artists. This keeps the discovery bias meaningful across successive refreshes
+        // instead of collapsing once a fixed number of playlists' artists are excluded.
+        val poolArtistIds = artistsWithTracks.map { it.id }.toSet()
+        val neededArtists = (targetDurationMs / AVG_TRACK_MS).toInt().coerceAtLeast(1)
+        val cooldownArtistIds = adaptiveArtistCooldown(
+            recentArtistSets = recentArtistSets,
+            poolArtistIds = poolArtistIds,
+            discoveryArtistIds = discoveryArtistIds,
+            neededArtists = neededArtists
+        )
 
         // Partition: artists on cooldown are placed after all fresh artists so they
         // only fill in if the playlist would otherwise fall short of targetDurationMs.
@@ -132,14 +164,21 @@ class TrueShuffleEngine {
             totalMs += track.durationMs
         }
 
-        // Second pass if we're still short: allow repeat artists, avoid exact same track
+        // Second pass if we're still short: allow repeat artists, but keep honouring the
+        // cooldown/liked/popularity preferences via selectTrack instead of a blind random
+        // pick — so we don't re-surface recently-played tracks just to fill time.
         if (totalMs < targetDurationMs) {
             val usedTrackIds = playlist.map { it.id }.toMutableSet()
             for (artist in orderedArtists.shuffled()) {
                 if (totalMs >= targetDurationMs) break
                 val remaining = filteredTracksByArtist[artist.id]?.filter { it.id !in usedTrackIds }
                 if (remaining.isNullOrEmpty()) continue
-                val track = remaining.random()
+                val track = selectTrack(
+                    remaining,
+                    isRareArtist = artist.id !in topArtistIds,
+                    likedTrackIds = likedTrackIds,
+                    cooldownTrackIds = cooldownTrackIds
+                )
                 playlist.add(track)
                 usedTrackIds.add(track.id)
                 totalMs += track.durationMs
@@ -147,6 +186,38 @@ class TrueShuffleEngine {
         }
 
         return playlist
+    }
+
+    /**
+     * Decides which artists to place on cooldown for this build.
+     *
+     * Walks [recentArtistSets] most-recent-first, adding each past playlist's artists to the
+     * suppressed set — but stops before the remaining fresh pool would drop below
+     * [neededArtists] × [FRESH_HEADROOM]. Tier C (discovery) artists are never suppressed:
+     * the discovery pool is small and is the entire point of a high discovery bias, so keeping
+     * it available is what stops the bias from collapsing to 0% after a few refreshes.
+     *
+     * With a large library this behaves like the old fixed-N cooldown; with a small one it
+     * relaxes automatically so the playlist can still be built (at the cost of some repeats,
+     * which is unavoidable when the pool is smaller than what the target duration needs).
+     */
+    private fun adaptiveArtistCooldown(
+        recentArtistSets: List<Set<String>>,
+        poolArtistIds: Set<String>,
+        discoveryArtistIds: Set<String>,
+        neededArtists: Int
+    ): Set<String> {
+        val floor = neededArtists * FRESH_HEADROOM
+        val suppressed = mutableSetOf<String>()
+        for (set in recentArtistSets) {
+            val additions = set.filter {
+                it in poolArtistIds && it !in discoveryArtistIds && it !in suppressed
+            }
+            // Stop at playlist granularity once suppressing this one would starve the pool.
+            if (poolArtistIds.size - (suppressed.size + additions.size) < floor) break
+            suppressed.addAll(additions)
+        }
+        return suppressed
     }
 
     /**
@@ -280,12 +351,16 @@ class TrueShuffleEngine {
 
         if (pool.size == 1) return pool[0]
 
-        val sorted = pool.sortedBy { it.popularity }
+        // Treat unknown popularity (0 — album/gap-sourced simplified tracks have no score) as
+        // a neutral mid value so those tracks sort as *average* rather than always winning the
+        // least-popular deep-cut bias over tracks with real, genuinely-low popularity.
+        fun effectivePop(t: Track) = if (t.popularity <= 0) NEUTRAL_POPULARITY else t.popularity
+        val sorted = pool.sortedBy { effectivePop(it) }
 
-        // If every track has the same popularity (common for album-sourced gap-artist tracks
-        // where the API returns no score and we default to 0), the x² index would skew
-        // heavily toward the first entry. Use uniform random instead.
-        if (sorted.first().popularity == sorted.last().popularity) {
+        // If every track has the same effective popularity (common when a whole pool is
+        // album-sourced unknowns), the x² index would skew toward the first entry. Use uniform
+        // random instead so every track is equally likely.
+        if (effectivePop(sorted.first()) == effectivePop(sorted.last())) {
             return pool.random()
         }
 
