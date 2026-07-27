@@ -19,6 +19,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            // Strips resources no code path references — most of the win comes from the
+            // Compose/material-icons artifacts, not this app's own 17 resource files.
+            // Safe here: nothing looks resources up by name (no Resources.getIdentifier).
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

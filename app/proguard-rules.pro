@@ -9,8 +9,10 @@
 -keepattributes Signature, InnerClasses, EnclosingMethod
 -keepattributes RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations, AnnotationDefault
 
-# Keep Retrofit itself
--keep class retrofit2.** { *; }
+# Retrofit ships its own consumer rules (META-INF/proguard/retrofit2.pro) which already cover
+# the @retrofit2.http.* member keeps, the R8 full-mode "-if interface" rule and these -dontwarns.
+# A blanket "-keep class retrofit2.** { *; }" is therefore redundant AND harmful: it exempts the
+# whole library from shrinking, optimisation and obfuscation. Deliberately not used.
 -dontwarn retrofit2.KotlinExtensions
 -dontwarn retrofit2.KotlinExtensions$*
 
@@ -35,7 +37,10 @@
 -keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
 
 # ── OkHttp ───────────────────────────────────────────────────────────────────
--keep class okhttp3.** { *; }
+# OkHttp ships its own consumer rules (META-INF/proguard/okhttp3.pro): a -keepnames on
+# PublicSuffixDatabase plus the platform/conscrypt/bouncycastle -dontwarns. Blanket-keeping
+# okhttp3.** is redundant and exempts the app's largest dependency from shrinking entirely.
+# The -dontwarns below are kept (they cost nothing in the output) purely as build-time safety.
 -dontwarn okhttp3.**
 -dontwarn okio.**
 
