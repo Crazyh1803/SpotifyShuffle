@@ -42,7 +42,8 @@ private val DURATION_OPTIONS = listOf(
 
 /**
  * Settings bottom sheet containing all user-configurable options:
- *   • Repeat cooldown slider (1–10 playlists — governs both song and artist repeats)
+ *   • Song repeat cooldown slider (1–50 playlists)
+ *   • Artist repeat cooldown slider (1–30 playlists)
  *   • Discovery mix slider (0 % Familiar ↔ 100 % Discovery)
  *   • Playlist duration segmented buttons (30 min / 1 hr / 1.5 hr / 2 hr / 3 hr)
  *   • Reset cooldown memory
@@ -54,7 +55,10 @@ fun SettingsSheet(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
-    val cooldownCount          by viewModel.cooldownCount.collectAsState()
+    val songCooldownCount      by viewModel.songCooldownCount.collectAsState()
+    val artistCooldownCount    by viewModel.artistCooldownCount.collectAsState()
+    val maxSustainableSong     by viewModel.maxSustainableSongCooldown.collectAsState()
+    val maxSustainableArtist   by viewModel.maxSustainableArtistCooldown.collectAsState()
     val discoveryBias          by viewModel.discoveryBias.collectAsState()
     val playlistDurationMs     by viewModel.playlistDurationMs.collectAsState()
     val autoRebuildDays        by viewModel.autoRebuildDays.collectAsState()
@@ -87,19 +91,19 @@ fun SettingsSheet(
                 color = Color.White
             )
 
-            // ── Repeat Cooldown ──────────────────────────────────────────────
-            SettingSection(title = "Repeat cooldown") {
+            // ── Song Repeat Cooldown ─────────────────────────────────────────
+            SettingSection(title = "Song repeat cooldown") {
                 Text(
-                    text = "$cooldownCount ${if (cooldownCount == 1) "playlist" else "playlists"}",
+                    text = "$songCooldownCount ${if (songCooldownCount == 1) "playlist" else "playlists"}",
                     color = SpotifyGreen,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold
                 )
                 Slider(
-                    value = cooldownCount.toFloat(),
-                    onValueChange = { viewModel.setCooldownCount(it.toInt()) },
-                    valueRange = 1f..10f,
-                    steps = 8,  // integer steps between 1 and 10 (10 - 1 - 1 = 8)
+                    value = songCooldownCount.toFloat(),
+                    onValueChange = { viewModel.setSongCooldownCount(it.toInt()) },
+                    valueRange = 1f..50f,
+                    steps = 48,  // integer steps between 1 and 50 (50 - 1 - 1 = 48)
                     colors = SliderDefaults.colors(
                         thumbColor = SpotifyGreen,
                         activeTrackColor = SpotifyGreen,
@@ -113,7 +117,53 @@ fun SettingsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
-                    Text("10", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text("50", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                }
+                if (songCooldownCount > maxSustainableSong) {
+                    Text(
+                        text = "With your library size, full cooldown holds up to ~$maxSustainableSong " +
+                            "playlists — higher values will relax automatically for some songs.",
+                        color = SpotifyLightGray.copy(alpha = 0.6f),
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            // ── Artist Repeat Cooldown ───────────────────────────────────────
+            SettingSection(title = "Artist repeat cooldown") {
+                Text(
+                    text = "$artistCooldownCount ${if (artistCooldownCount == 1) "playlist" else "playlists"}",
+                    color = SpotifyGreen,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Slider(
+                    value = artistCooldownCount.toFloat(),
+                    onValueChange = { viewModel.setArtistCooldownCount(it.toInt()) },
+                    valueRange = 1f..30f,
+                    steps = 28,  // integer steps between 1 and 30 (30 - 1 - 1 = 28)
+                    colors = SliderDefaults.colors(
+                        thumbColor = SpotifyGreen,
+                        activeTrackColor = SpotifyGreen,
+                        inactiveTrackColor = SpotifyLightGray.copy(alpha = 0.3f),
+                        activeTickColor = Color.Transparent,
+                        inactiveTickColor = Color.Transparent
+                    )
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text("30", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                }
+                if (artistCooldownCount > maxSustainableArtist) {
+                    Text(
+                        text = "With your library size, full cooldown holds up to ~$maxSustainableArtist " +
+                            "playlists — higher values will relax automatically for some artists.",
+                        color = SpotifyLightGray.copy(alpha = 0.6f),
+                        fontSize = 11.sp
+                    )
                 }
             }
 

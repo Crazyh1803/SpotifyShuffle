@@ -46,7 +46,10 @@ data class PlaylistLogEntry(
     val source: String = "manual",
     val discoveryBias: Int = 0,
     val targetDurationMs: Long = 0L,
-    val cooldownPlaylists: Int = 0,
+    /** Number of past playlists a TRACK was suppressed for during this build. */
+    val songCooldownPlaylists: Int = 0,
+    /** Number of past playlists an ARTIST was suppressed for during this build. */
+    val artistCooldownPlaylists: Int = 0,
     val trackCount: Int = 0,
     val artistCount: Int = 0,
     val tierACount: Int = 0,
@@ -73,7 +76,8 @@ fun buildPlaylistLogEntry(
     source: String,
     discoveryBias: Int,
     targetDurationMs: Long,
-    cooldownPlaylists: Int,
+    songCooldownPlaylists: Int,
+    artistCooldownPlaylists: Int,
     nowMs: Long = System.currentTimeMillis()
 ): PlaylistLogEntry {
     val trackLogs = tracks.map { track ->
@@ -97,7 +101,8 @@ fun buildPlaylistLogEntry(
         source = source,
         discoveryBias = discoveryBias,
         targetDurationMs = targetDurationMs,
-        cooldownPlaylists = cooldownPlaylists,
+        songCooldownPlaylists = songCooldownPlaylists,
+        artistCooldownPlaylists = artistCooldownPlaylists,
         trackCount = trackLogs.size,
         artistCount = tracks.flatMap { it.artists }.map { it.id }.toSet().size,
         tierACount = trackLogs.count { it.tier == "A" },

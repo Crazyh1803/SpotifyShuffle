@@ -115,8 +115,8 @@ class PlaylistRebuildWorker(
 
             // Shuffle
             val history           = historyStorage.load()
-            val cooldownTrackIds  = historyStorage.getCooldownSets(history.cooldownPlaylists, history).first
-            val recentArtistSets  = historyStorage.getRecentArtistSets(history.cooldownPlaylists, history)
+            val cooldownTrackIds  = historyStorage.getCooldownTrackIds(history.cooldownPlaylists, history)
+            val recentArtistSets  = historyStorage.getRecentArtistSets(history.artistCooldownPlaylists, history)
             val tracks   = shuffleEngine.buildPlaylist(
                 followedArtists   = library.followedArtists,
                 topArtistIds      = topArtistIds,
@@ -152,7 +152,8 @@ class PlaylistRebuildWorker(
             historyStorage.recordPlaylist(
                 tracks.map { it.id },
                 tracks.flatMap { it.artists }.map { it.id }.distinct(),
-                history.cooldownPlaylists
+                history.cooldownPlaylists,
+                history.artistCooldownPlaylists
             )
 
             // Record the full playlist to the analysis log (source = auto).
@@ -164,7 +165,8 @@ class PlaylistRebuildWorker(
                 source = "auto",
                 discoveryBias = settings.discoveryBias,
                 targetDurationMs = settings.playlistDurationMs,
-                cooldownPlaylists = history.cooldownPlaylists
+                songCooldownPlaylists = history.cooldownPlaylists,
+                artistCooldownPlaylists = history.artistCooldownPlaylists
             )
             playlistLog.record(logEntry)
 

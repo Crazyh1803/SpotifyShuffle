@@ -100,9 +100,31 @@ class MainViewModel(
     private val _uiState = MutableStateFlow<UiState>(UiState.NotLoggedIn)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    /** How many past playlists an artist/track must skip before being eligible again (1–10). */
-    private val _cooldownCount = MutableStateFlow(historyStorage.load().cooldownPlaylists)
-    val cooldownCount: StateFlow<Int> = _cooldownCount.asStateFlow()
+    /** How many past playlists a TRACK must skip before being eligible again (1–50). */
+    private val _songCooldownCount = MutableStateFlow(historyStorage.load().cooldownPlaylists)
+    val songCooldownCount: StateFlow<Int> = _songCooldownCount.asStateFlow()
+
+    /** How many past playlists an ARTIST must skip before being eligible again (1–30). */
+    private val _artistCooldownCount = MutableStateFlow(historyStorage.load().artistCooldownPlaylists)
+    val artistCooldownCount: StateFlow<Int> = _artistCooldownCount.asStateFlow()
+
+    /**
+     * Largest cooldown value the current library can fully sustain before the engine's
+     * starvation-safe floor starts relaxing it early. Recomputed whenever Settings opens or
+     * the playlist duration changes. Used to show a non-blocking capacity warning; the engine
+     * itself already degrades safely past this point, so nothing breaks if the user ignores it.
+     */
+    private val _maxSustainableArtistCooldown = MutableStateFlow(computeMaxSustainableArtistCooldown())
+    val maxSustainableArtistCooldown: StateFlow<Int> = _maxSustainableArtistCooldown.asStateFlow()
+
+    /**
+     * Best-effort estimate of the song cooldown value beyond which many artists' cached track
+     * pools will be fully exhausted (so cooldown stops changing which track gets picked for
+     * them). Not a hard guarantee like the artist estimate — it's a heuristic from average
+     * cached tracks-per-artist.
+     */
+    private val _maxSustainableSongCooldown = MutableStateFlow(computeMaxSustainableSongCooldown())
+    val maxSustainableSongCooldown: StateFlow<Int> = _maxSustainableSongCooldown.asStateFlow()
 
     /** 0–100 discovery bias slider (maps to Tier C weight in the engine). */
     private val _discoveryBias = MutableStateFlow(appSettings.load().discoveryBias)
@@ -156,7 +178,10 @@ class MainViewModel(
 
     // ── Settings ──────────────────────────────────────────────────────────────
 
-    fun openSettings() { _settingsVisible.value = true }
+    fun openSettings() {
+        refreshCooldownCapacityEstimates()
+        _settingsVisible.value = true
+    }
     fun closeSettings() { _settingsVisible.value = false }
 
     /**
@@ -179,11 +204,18 @@ class MainViewModel(
         _uiState.value = UiState.Setup
     }
 
-    /** Updates the cooldown setting and persists it immediately. */
-    fun setCooldownCount(n: Int) {
-        val clamped = n.coerceIn(1, 10)
-        _cooldownCount.value = clamped
+    /** Updates the song/track cooldown setting (1–50) and persists it immediately. */
+    fun setSongCooldownCount(n: Int) {
+        val clamped = n.coerceIn(1, 50)
+        _songCooldownCount.value = clamped
         historyStorage.saveCooldownCount(clamped)
+    }
+
+    /** Updates the artist cooldown setting (1–30) and persists it immediately. */
+    fun setArtistCooldownCount(n: Int) {
+        val clamped = n.coerceIn(1, 30)
+        _artistCooldownCount.value = clamped
+        historyStorage.saveArtistCooldownCount(clamped)
     }
 
     /** Updates the discovery bias (0–100) and persists it. */
@@ -197,12 +229,44 @@ class MainViewModel(
     fun setPlaylistDuration(ms: Long) {
         _playlistDurationMs.value = ms
         appSettings.savePlaylistDuration(ms)
+        refreshCooldownCapacityEstimates()
     }
 
-    /** Clears cooldown history (resets artist/track suppression) without touching the cooldown count setting. */
+    /** Clears cooldown history (resets artist/track suppression) without touching the cooldown count settings. */
     fun clearCooldownHistory() {
         historyStorage.clearHistory()
         Log.d(TAG, "Cooldown history cleared by user")
+    }
+
+    /**
+     * Recomputes [maxSustainableArtistCooldown] and [maxSustainableSongCooldown] from the
+     * currently cached library. Cheap — reads already-cached JSON, no network calls.
+     */
+    fun refreshCooldownCapacityEstimates() {
+        _maxSustainableArtistCooldown.value = computeMaxSustainableArtistCooldown()
+        _maxSustainableSongCooldown.value = computeMaxSustainableSongCooldown()
+    }
+
+    /**
+     * Precise estimate: mirrors [TrueShuffleEngine.maxSustainableCooldown] using the cached
+     * followed-artist count and current target duration.
+     */
+    private fun computeMaxSustainableArtistCooldown(): Int {
+        val poolSize = artistCache.load().followedArtists.size
+        val durationMs = appSettings.load().playlistDurationMs
+        return TrueShuffleEngine.maxSustainableCooldown(poolSize, durationMs)
+    }
+
+    /**
+     * Best-effort estimate: average cached tracks-per-artist across the gap-artist cache. Once
+     * song cooldown exceeds this, many artists' entire cached pool is likely to be "on cooldown"
+     * simultaneously, so cooldown stops meaningfully changing which track gets picked for them.
+     * Returns a very large number (no warning) when there's no gap-scan data yet to estimate from.
+     */
+    private fun computeMaxSustainableSongCooldown(): Int {
+        val trackCounts = gapArtistCache.load().values.map { it.tracks.size }.filter { it > 0 }
+        if (trackCounts.isEmpty()) return Int.MAX_VALUE
+        return trackCounts.average().toInt().coerceAtLeast(1)
     }
 
     /** Updates the auto-rescan interval (0 = manual only, 1–365 = days) and persists it. */
@@ -340,7 +404,9 @@ class MainViewModel(
             add("--- Settings ---")
             add("Discovery bias         : ${settings.discoveryBias}%")
             add("Playlist duration      : ${settings.playlistDurationMs / 60_000} min")
-            add("Repeat cooldown        : ${historyStorage.load().cooldownPlaylists} playlists")
+            val cooldownSettings = historyStorage.load()
+            add("Song cooldown          : ${cooldownSettings.cooldownPlaylists} playlists")
+            add("Artist cooldown        : ${cooldownSettings.artistCooldownPlaylists} playlists")
             add("Auto-rebuild           : ${if (settings.autoRebuildDays == 0) "Off" else "Every ${settings.autoRebuildDays} days"}")
             add("Track rescan interval  : ${if (settings.trackRescanIntervalDays == 0) "Manual" else "Every ${settings.trackRescanIntervalDays} days"}")
             add("")
@@ -398,7 +464,8 @@ class MainViewModel(
         // Flat CSV: one row per track, with the owning build's metadata repeated per row.
         val header = listOf(
             "build_timestamp", "source", "discovery_bias", "target_duration_min",
-            "cooldown_playlists", "build_track_count", "build_artist_count",
+            "song_cooldown_playlists", "artist_cooldown_playlists",
+            "build_track_count", "build_artist_count",
             "build_tier_a", "build_tier_b", "build_tier_c",
             "track_name", "artist_name", "album_name", "release_date",
             "popularity", "duration_ms", "tier", "liked", "track_id", "artist_id"
@@ -409,7 +476,8 @@ class MainViewModel(
                 e.tracks.forEach { t ->
                     add(listOf(
                         e.timestampIso, e.source, e.discoveryBias.toString(),
-                        (e.targetDurationMs / 60_000).toString(), e.cooldownPlaylists.toString(),
+                        (e.targetDurationMs / 60_000).toString(),
+                        e.songCooldownPlaylists.toString(), e.artistCooldownPlaylists.toString(),
                         e.trackCount.toString(), e.artistCount.toString(),
                         e.tierACount.toString(), e.tierBCount.toString(), e.tierCCount.toString(),
                         csvCell(t.trackName), csvCell(t.artistName), csvCell(t.albumName),
@@ -630,13 +698,14 @@ class MainViewModel(
                 stepName = "savePlaylist"
                 progress("Assembling your true shuffle playlist…", 4, 4)
 
-                // Load cooldown sets: track/artist IDs from the last N playlists are
-                // suppressed so the same songs/artists don't repeat every build.
+                // Load cooldown sets: tracks from the last N_song playlists and artists from the
+                // last N_artist playlists are suppressed — independent settings, since a track
+                // and its artist can reasonably need different repeat windows.
                 val history = historyStorage.load()
-                val cooldownTrackIds = historyStorage.getCooldownSets(history.cooldownPlaylists, history).first
-                val recentArtistSets = historyStorage.getRecentArtistSets(history.cooldownPlaylists, history)
-                Log.d(TAG, "Cooldown N=${history.cooldownPlaylists}: ${cooldownTrackIds.size} tracks suppressed, " +
-                    "${recentArtistSets.size} recent playlists for adaptive artist cooldown")
+                val cooldownTrackIds = historyStorage.getCooldownTrackIds(history.cooldownPlaylists, history)
+                val recentArtistSets = historyStorage.getRecentArtistSets(history.artistCooldownPlaylists, history)
+                Log.d(TAG, "Song cooldown N=${history.cooldownPlaylists}: ${cooldownTrackIds.size} tracks suppressed; " +
+                    "artist cooldown N=${history.artistCooldownPlaylists}: ${recentArtistSets.size} recent playlists")
 
                 val currentBias = _discoveryBias.value
                 val currentDurationMs = _playlistDurationMs.value
@@ -667,7 +736,10 @@ class MainViewModel(
                 // Record this playlist so future builds avoid repeating its songs/artists.
                 val playlistTrackIds = tracks.map { it.id }
                 val playlistArtistIds = tracks.flatMap { it.artists }.map { it.id }.distinct()
-                historyStorage.recordPlaylist(playlistTrackIds, playlistArtistIds, history.cooldownPlaylists)
+                historyStorage.recordPlaylist(
+                    playlistTrackIds, playlistArtistIds,
+                    history.cooldownPlaylists, history.artistCooldownPlaylists
+                )
 
                 // Build the analysis-log entry (also classifies each track into its tier,
                 // C > A > B priority) and record it. The entry's counts double as the
@@ -680,7 +752,8 @@ class MainViewModel(
                     source = "manual",
                     discoveryBias = currentBias,
                     targetDurationMs = currentDurationMs,
-                    cooldownPlaylists = history.cooldownPlaylists
+                    songCooldownPlaylists = history.cooldownPlaylists,
+                    artistCooldownPlaylists = history.artistCooldownPlaylists
                 )
                 playlistLog.record(logEntry)
 

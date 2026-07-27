@@ -62,6 +62,21 @@ class TrueShuffleEngine {
         private const val NEUTRAL_POPULARITY = 35
 
         /**
+         * Estimates the largest artist-cooldown value (in playlists) the given pool can fully
+         * sustain before [adaptiveArtistCooldown]'s starvation floor starts relaxing it early.
+         * Mirrors the same math the engine actually uses, so it's precise, not a guess.
+         *
+         * Used by Settings to warn the user when their chosen cooldown value exceeds what their
+         * library can support — the engine itself already degrades safely, this just makes that
+         * degradation visible instead of silent.
+         */
+        fun maxSustainableCooldown(poolArtistCount: Int, targetDurationMs: Long): Int {
+            val neededArtists = (targetDurationMs / AVG_TRACK_MS).toInt().coerceAtLeast(1)
+            val floor = neededArtists * FRESH_HEADROOM
+            return ((poolArtistCount - floor) / neededArtists).coerceAtLeast(0)
+        }
+
+        /**
          * Classifies a track into a playlist tier ("A", "B", or "C") using the same
          * priority the success-screen breakdown uses: C > A > B. We check ALL of a
          * track's artists (not just the primary) because gap-fill tracks fetched from
@@ -135,16 +150,14 @@ class TrueShuffleEngine {
         }
         if (artistsWithTracks.isEmpty()) return emptyList()
 
-        // Adaptive artist cooldown: suppress artists from the most-recent playlists first,
-        // but stop before the fresh pool would starve, and never suppress Tier C (discovery)
-        // artists. This keeps the discovery bias meaningful across successive refreshes
-        // instead of collapsing once a fixed number of playlists' artists are excluded.
+        // Adaptive artist cooldown: suppress artists from the most-recent playlists first
+        // (all tiers), but stop before the fresh pool would starve. Self-relaxing, so a small
+        // library never gets stuck unable to build a playlist.
         val poolArtistIds = artistsWithTracks.map { it.id }.toSet()
         val neededArtists = (targetDurationMs / AVG_TRACK_MS).toInt().coerceAtLeast(1)
         val cooldownArtistIds = adaptiveArtistCooldown(
             recentArtistSets = recentArtistSets,
             poolArtistIds = poolArtistIds,
-            discoveryArtistIds = discoveryArtistIds,
             neededArtists = neededArtists
         )
 
@@ -204,9 +217,12 @@ class TrueShuffleEngine {
      *
      * Walks [recentArtistSets] most-recent-first, adding each past playlist's artists to the
      * suppressed set — but stops before the remaining fresh pool would drop below
-     * [neededArtists] × [FRESH_HEADROOM]. Tier C (discovery) artists are never suppressed:
-     * the discovery pool is small and is the entire point of a high discovery bias, so keeping
-     * it available is what stops the bias from collapsing to 0% after a few refreshes.
+     * [neededArtists] × [FRESH_HEADROOM]. Applies to all tiers, including Tier C (discovery):
+     * earlier versions exempted discovery artists entirely because the discovery pool used to be
+     * too small to survive any cooldown at all, which caused the bias to collapse to 0% after a
+     * few refreshes. Now that the same starvation-safe floor already protects A/B, it protects C
+     * too — the floor check is tier-agnostic pool-size math, so there's no new collapse risk as
+     * long as the discovery pool is large enough (which is what this floor is checking for).
      *
      * With a large library this behaves like the old fixed-N cooldown; with a small one it
      * relaxes automatically so the playlist can still be built (at the cost of some repeats,
@@ -215,14 +231,13 @@ class TrueShuffleEngine {
     private fun adaptiveArtistCooldown(
         recentArtistSets: List<Set<String>>,
         poolArtistIds: Set<String>,
-        discoveryArtistIds: Set<String>,
         neededArtists: Int
     ): Set<String> {
         val floor = neededArtists * FRESH_HEADROOM
         val suppressed = mutableSetOf<String>()
         for (set in recentArtistSets) {
             val additions = set.filter {
-                it in poolArtistIds && it !in discoveryArtistIds && it !in suppressed
+                it in poolArtistIds && it !in suppressed
             }
             // Stop at playlist granularity once suppressing this one would starve the pool.
             if (poolArtistIds.size - (suppressed.size + additions.size) < floor) break
