@@ -7,6 +7,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -59,6 +60,7 @@ fun SettingsSheet(
     val artistCooldownCount    by viewModel.artistCooldownCount.collectAsState()
     val maxSustainableSong     by viewModel.maxSustainableSongCooldown.collectAsState()
     val maxSustainableArtist   by viewModel.maxSustainableArtistCooldown.collectAsState()
+    val artistPoolSize         by viewModel.artistPoolSize.collectAsState()
     val discoveryBias          by viewModel.discoveryBias.collectAsState()
     val playlistDurationMs     by viewModel.playlistDurationMs.collectAsState()
     val autoRebuildDays        by viewModel.autoRebuildDays.collectAsState()
@@ -119,12 +121,14 @@ fun SettingsSheet(
                     Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                     Text("50", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                 }
-                if (songCooldownCount > maxSustainableSong) {
-                    Text(
-                        text = "With your library size, full cooldown holds up to ~$maxSustainableSong " +
-                            "playlists — higher values will relax automatically for some songs.",
-                        color = SpotifyLightGray.copy(alpha = 0.6f),
-                        fontSize = 11.sp
+                maxSustainableSong?.let { rec ->
+                    CooldownRecommendation(
+                        recommended = rec,
+                        current = songCooldownCount,
+                        rationale = "about the number of tracks cached per artist.",
+                        overshootNote = "Past that, some artists have no un-cooled tracks left, " +
+                            "so cooldown quietly relaxes for them.",
+                        onApply = { viewModel.applyRecommendedSongCooldown() }
                     )
                 }
             }
@@ -157,12 +161,15 @@ fun SettingsSheet(
                     Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                     Text("30", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                 }
-                if (artistCooldownCount > maxSustainableArtist) {
-                    Text(
-                        text = "With your library size, full cooldown holds up to ~$maxSustainableArtist " +
-                            "playlists — higher values will relax automatically for some artists.",
-                        color = SpotifyLightGray.copy(alpha = 0.6f),
-                        fontSize = 11.sp
+                maxSustainableArtist?.let { rec ->
+                    CooldownRecommendation(
+                        recommended = rec,
+                        current = artistCooldownCount,
+                        rationale = "what $artistPoolSize artists sustain for a " +
+                            "${playlistDurationMs / 60_000} min playlist.",
+                        overshootNote = "Past that the fresh pool would starve, so the engine " +
+                            "relaxes cooldown automatically — $artistCooldownCount behaves like $rec.",
+                        onApply = { viewModel.applyRecommendedArtistCooldown() }
                     )
                 }
             }
@@ -506,5 +513,55 @@ private fun SettingSection(
             letterSpacing = 0.8.sp
         )
         content()
+    }
+}
+
+/**
+ * The advisory line under a cooldown slider: what the app recommends for the current library,
+ * why, and a one-tap way to apply it.
+ *
+ * Deliberately non-blocking — the engine already degrades safely past [recommended], so this
+ * explains the number rather than enforcing it. [overshootNote] only appears once the user's
+ * setting is actually above what the library can honour.
+ */
+@Composable
+private fun CooldownRecommendation(
+    recommended: Int,
+    current: Int,
+    rationale: String,
+    overshootNote: String,
+    onApply: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Recommended: $recommended — $rationale",
+                color = SpotifyLightGray.copy(alpha = 0.6f),
+                fontSize = 11.sp,
+                modifier = Modifier.weight(1f)
+            )
+            if (current != recommended) {
+                Text(
+                    text = "Use $recommended",
+                    color = SpotifyGreen,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .padding(start = 12.dp)
+                        .clickable { onApply() }
+                )
+            }
+        }
+        if (current > recommended) {
+            Text(
+                text = overshootNote,
+                color = SpotifyLightGray.copy(alpha = 0.6f),
+                fontSize = 11.sp
+            )
+        }
     }
 }

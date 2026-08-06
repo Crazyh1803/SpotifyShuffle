@@ -109,22 +109,34 @@ class MainViewModel(
     val artistCooldownCount: StateFlow<Int> = _artistCooldownCount.asStateFlow()
 
     /**
-     * Largest cooldown value the current library can fully sustain before the engine's
-     * starvation-safe floor starts relaxing it early. Recomputed whenever Settings opens or
-     * the playlist duration changes. Used to show a non-blocking capacity warning; the engine
-     * itself already degrades safely past this point, so nothing breaks if the user ignores it.
+     * The artist cooldown value to recommend: the largest one the current library can fully
+     * honour before the engine's starvation-safe floor starts relaxing it early.
+     *
+     * Depends on BOTH the artist pool size and the target duration — a longer playlist burns
+     * more artists per build, so it sustains a shorter cooldown. Recomputed whenever Settings
+     * opens or the duration changes. `null` while no library is cached yet.
+     *
+     * Nothing breaks above this value; the engine degrades safely. It just stops being the
+     * number the user asked for, which is what makes it worth surfacing.
      */
     private val _maxSustainableArtistCooldown = MutableStateFlow(computeMaxSustainableArtistCooldown())
-    val maxSustainableArtistCooldown: StateFlow<Int> = _maxSustainableArtistCooldown.asStateFlow()
+    val maxSustainableArtistCooldown: StateFlow<Int?> = _maxSustainableArtistCooldown.asStateFlow()
 
     /**
-     * Best-effort estimate of the song cooldown value beyond which many artists' cached track
-     * pools will be fully exhausted (so cooldown stops changing which track gets picked for
-     * them). Not a hard guarantee like the artist estimate — it's a heuristic from average
-     * cached tracks-per-artist.
+     * Best-effort song cooldown recommendation: the value beyond which many artists' cached
+     * track pools will be fully exhausted (so cooldown stops changing which track gets picked
+     * for them). Not a hard guarantee like the artist figure — it's a heuristic from average
+     * cached tracks-per-artist. `null` until a gap scan has produced data to estimate from.
      */
     private val _maxSustainableSongCooldown = MutableStateFlow(computeMaxSustainableSongCooldown())
-    val maxSustainableSongCooldown: StateFlow<Int> = _maxSustainableSongCooldown.asStateFlow()
+    val maxSustainableSongCooldown: StateFlow<Int?> = _maxSustainableSongCooldown.asStateFlow()
+
+    /**
+     * Followed artists that could actually contribute a track to a build. Shown alongside the
+     * recommendation so the number has a visible reason ("your 291 artists support 7").
+     */
+    private val _artistPoolSize = MutableStateFlow(computeArtistPoolSize())
+    val artistPoolSize: StateFlow<Int> = _artistPoolSize.asStateFlow()
 
     /** 0–100 discovery bias slider (maps to Tier C weight in the engine). */
     private val _discoveryBias = MutableStateFlow(appSettings.load().discoveryBias)
@@ -243,30 +255,56 @@ class MainViewModel(
      * currently cached library. Cheap — reads already-cached JSON, no network calls.
      */
     fun refreshCooldownCapacityEstimates() {
+        _artistPoolSize.value = computeArtistPoolSize()
         _maxSustainableArtistCooldown.value = computeMaxSustainableArtistCooldown()
         _maxSustainableSongCooldown.value = computeMaxSustainableSongCooldown()
     }
 
-    /**
-     * Precise estimate: mirrors [TrueShuffleEngine.maxSustainableCooldown] using the cached
-     * followed-artist count and current target duration.
-     */
-    private fun computeMaxSustainableArtistCooldown(): Int {
-        val poolSize = artistCache.load().followedArtists.size
-        val durationMs = appSettings.load().playlistDurationMs
-        return TrueShuffleEngine.maxSustainableCooldown(poolSize, durationMs)
+    /** Applies the recommended artist cooldown for the current library and duration. No-op if unknown. */
+    fun applyRecommendedArtistCooldown() {
+        _maxSustainableArtistCooldown.value?.let { setArtistCooldownCount(it) }
+    }
+
+    /** Applies the recommended song cooldown for the current library. No-op if unknown. */
+    fun applyRecommendedSongCooldown() {
+        _maxSustainableSongCooldown.value?.let { setSongCooldownCount(it) }
     }
 
     /**
-     * Best-effort estimate: average cached tracks-per-artist across the gap-artist cache. Once
-     * song cooldown exceeds this, many artists' entire cached pool is likely to be "on cooldown"
-     * simultaneously, so cooldown stops meaningfully changing which track gets picked for them.
-     * Returns a very large number (no warning) when there's no gap-scan data yet to estimate from.
+     * Size of the pool the engine actually draws from — followed artists MINUS the ones a gap
+     * scan checked and found no accessible tracks for. Those can never fill a slot, so counting
+     * them (as the raw follow count does) would overstate what the library can sustain.
      */
-    private fun computeMaxSustainableSongCooldown(): Int {
+    private fun computeArtistPoolSize(): Int {
+        val followed = artistCache.load().followedArtists
+        if (followed.isEmpty()) return 0
+        val emptyIds = gapArtistCache.load()
+            .filterValues { it.scannedAtMs > 0L && it.tracks.isEmpty() }
+            .keys
+        return followed.count { it.id !in emptyIds }
+    }
+
+    /**
+     * Precise: mirrors [TrueShuffleEngine.maxSustainableCooldown] using the real artist pool and
+     * the current target duration, clamped to the artist slider's range. Null with no library.
+     */
+    private fun computeMaxSustainableArtistCooldown(): Int? {
+        val poolSize = computeArtistPoolSize()
+        if (poolSize == 0) return null
+        val durationMs = appSettings.load().playlistDurationMs
+        return TrueShuffleEngine.maxSustainableCooldown(poolSize, durationMs).coerceIn(1, 30)
+    }
+
+    /**
+     * Best-effort: average cached tracks-per-artist across the gap-artist cache, clamped to the
+     * song slider's range. Once song cooldown exceeds this, many artists' entire cached pool is
+     * likely on cooldown at once, so it stops meaningfully changing which track gets picked.
+     * Null when there's no gap-scan data yet to estimate from.
+     */
+    private fun computeMaxSustainableSongCooldown(): Int? {
         val trackCounts = gapArtistCache.load().values.map { it.tracks.size }.filter { it > 0 }
-        if (trackCounts.isEmpty()) return Int.MAX_VALUE
-        return trackCounts.average().toInt().coerceAtLeast(1)
+        if (trackCounts.isEmpty()) return null
+        return trackCounts.average().toInt().coerceIn(1, 50)
     }
 
     /** Updates the auto-rescan interval (0 = manual only, 1–365 = days) and persists it. */
