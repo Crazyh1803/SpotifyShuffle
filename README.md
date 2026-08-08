@@ -30,18 +30,22 @@ The final playlist is ~2 hours long (~30 songs at 4 min average).
 3. Fill in any name/description
 4. Under **Redirect URIs**, add exactly:
    ```
-   com.spotifytrueshuffle://callback
+   com.appsbydan.trueshuffle://callback
    ```
+   This must match byte-for-byte — it is the scheme registered in `AndroidManifest.xml`,
+   and Spotify rejects the login with `INVALID_CLIENT` if it differs.
 5. Check **Web API** under APIs used
 6. Save and copy your **Client ID**
 
-### 2. Add your Client ID to the app
+Your Spotify app starts in **Development Mode**, which only permits Spotify accounts you
+explicitly allowlist under **User Management** in the dashboard (25 max). Add any account
+that needs to sign in, including your own.
 
-Open `app/src/main/java/com/spotifytrueshuffle/SpotifyConfig.kt` and replace the placeholder:
+### 2. Enter your Client ID in the app
 
-```kotlin
-const val CLIENT_ID = "YOUR_SPOTIFY_CLIENT_ID"  // ← paste here
-```
+The Client ID is *not* compiled in — the app asks for it on first launch. Paste the
+32-character ID into the Setup screen and tap **Continue**. It is stored on-device in
+SharedPreferences and can be changed later via Settings → Change Client ID.
 
 ### 3. Build and install
 
@@ -80,7 +84,7 @@ The playlist is saved to your Spotify account as a private playlist named **"Tru
 
 ```
 app/src/main/java/com/spotifytrueshuffle/
-├── SpotifyConfig.kt          ← Client ID, redirect URI, target duration
+├── SpotifyConfig.kt          ← Redirect URI, OAuth scopes, API endpoints (no Client ID)
 ├── MainActivity.kt           ← Single activity; hosts Compose UI; handles OAuth redirect
 ├── auth/
 │   ├── PKCEUtils.kt          ← PKCE code verifier + challenge generation
