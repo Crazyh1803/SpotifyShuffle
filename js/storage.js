@@ -32,6 +32,14 @@ const SETTINGS_DEFAULTS = {
     /** Artist cooldown: how many past playlists an ARTIST skips. Independent of the song value. */
     artistCooldownPlaylists: 5,
     likedSongsExploreMode: false,
+    /** Name given to the playlist created on Spotify. Blank falls back to DEFAULT_PLAYLIST_NAME. */
+    playlistName: '',
+    /**
+     * The name actually pushed to Spotify on the last successful build. Lets a build skip the
+     * rename API call unless the user has changed the name since — one fewer request per build,
+     * which matters given how easily this app hits Spotify's rate limit.
+     */
+    appliedPlaylistName: '',
     /**
      * Artists from the last build that could actually contribute a track. Persisted so Settings
      * can show the cooldown recommendation without re-running a full library scan.
@@ -39,9 +47,25 @@ const SETTINGS_DEFAULTS = {
     lastArtistPoolSize: 0,
 };
 
+/** Used whenever the user hasn't set a name of their own. */
+export const DEFAULT_PLAYLIST_NAME = 'True Shuffle';
+
+/** Spotify rejects excessively long playlist names; keep well inside its limit. */
+export const MAX_PLAYLIST_NAME_LEN = 100;
+
 export const settings = {
     get: () => load(KEYS.settings, SETTINGS_DEFAULTS),
     save: (partial) => save(KEYS.settings, { ...settings.get(), ...partial }),
+
+    /**
+     * The playlist name to send to Spotify: trimmed, length-capped, and falling back to the
+     * default when blank. Centralised so the build path and the Settings UI can't disagree
+     * about what an empty or over-long entry means.
+     */
+    resolvedPlaylistName() {
+        const raw = (settings.get().playlistName || '').trim();
+        return raw ? raw.slice(0, MAX_PLAYLIST_NAME_LEN) : DEFAULT_PLAYLIST_NAME;
+    },
 };
 
 // ── Tokens ───────────────────────────────────────────────────────────────────
