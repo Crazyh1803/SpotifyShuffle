@@ -89,7 +89,9 @@
             <div class="home-hero">
                 <h2>Real shuffle.<br>No repeats. No bias.</h2>
                 <p>True Shuffle builds a playlist that spreads evenly across all your
-                   artists — so your whole library actually gets played.</p>
+                   artists — so your whole library actually gets played. It remembers
+                   your recent playlists, so each build brings different songs and
+                   different artists.</p>
             </div>
             <div class="spacer"></div>
             <button id="btn-login" class="btn btn-primary">Log in with Spotify</button>
@@ -216,17 +218,33 @@
                 <!-- Cooldown -->
                 <div class="setting-section">
                     <p class="setting-section-title">Cooldown</p>
+
                     <div class="setting-row">
                         <div>
-                            <div class="setting-row-label">Recent playlist memory</div>
-                            <div class="setting-row-desc">Avoid songs &amp; artists from this many previous builds</div>
+                            <div class="setting-row-label">Song repeat cooldown</div>
+                            <div class="setting-row-desc">Avoid songs used in this many previous builds</div>
                         </div>
-                        <div class="stepper">
-                            <button class="stepper-btn" id="btn-cooldown-dec" aria-label="Decrease">−</button>
-                            <span class="stepper-val" id="cooldown-value">2</span>
-                            <button class="stepper-btn" id="btn-cooldown-inc" aria-label="Increase">+</button>
-                        </div>
+                        <span class="setting-value" id="song-cooldown-value">5</span>
                     </div>
+                    <input type="range" id="input-song-cooldown" min="1" max="50" step="1" value="5">
+                    <div style="display:flex;justify-content:space-between;margin-top:6px;">
+                        <span class="text-muted text-sm">1</span>
+                        <span class="text-muted text-sm">50</span>
+                    </div>
+
+                    <div class="setting-row" style="margin-top:18px;">
+                        <div>
+                            <div class="setting-row-label">Artist repeat cooldown</div>
+                            <div class="setting-row-desc">Avoid artists used in this many previous builds</div>
+                        </div>
+                        <span class="setting-value" id="artist-cooldown-value">5</span>
+                    </div>
+                    <input type="range" id="input-artist-cooldown" min="1" max="30" step="1" value="5">
+                    <div style="display:flex;justify-content:space-between;margin-top:6px;">
+                        <span class="text-muted text-sm">1</span>
+                        <span class="text-muted text-sm">30</span>
+                    </div>
+                    <div class="text-muted text-sm" id="artist-cooldown-rec" style="margin-top:8px;"></div>
                 </div>
 
                 <div class="divider"></div>
@@ -282,6 +300,6 @@
 
 </div><!-- /.app -->
 
-<script type="module" src="js/app.js?v=18"></script>
+<script type="module" src="js/app.js?v=19"></script>
 </body>
 </html>
