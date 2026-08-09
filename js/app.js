@@ -1,10 +1,10 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=18';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=18';
-import * as api from './api.js?v=18';
-import { buildPlaylist } from './engine.js?v=18';
+import { startAuth, getRedirectUri } from './auth.js?v=19';
+import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=19';
+import * as api from './api.js?v=19';
+import { buildPlaylist, maxSustainableCooldown } from './engine.js?v=19';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -409,9 +409,11 @@ async function buildFlow() {
 
         // ── Step 4: Shuffle ───────────────────────────────────────────────────
         setStatus('Building your playlist…');
-        const cooldownN = s.cooldownPlaylists ?? 2;
-        const { trackIds: cooldownTrackIds, artistIds: cooldownArtistIds } =
-            history.getCooldownSets(cooldownN);
+        // Song and artist cooldown are independent settings backed by the same history.
+        const songCooldownN   = s.cooldownPlaylists       ?? 5;
+        const artistCooldownN = s.artistCooldownPlaylists ?? 5;
+        const cooldownTrackIds  = history.getCooldownTrackIds(songCooldownN);
+        const recentArtistSets  = history.getRecentArtistSets(artistCooldownN);
 
         const result = buildPlaylist({
             followedArtists:   effectiveFollowedArtists,
@@ -420,9 +422,17 @@ async function buildFlow() {
             discoveryIds,
             likedIds,
             cooldownTrackIds,
-            cooldownArtistIds,
+            recentArtistSets,
             discoveryBias:     s.discoveryBias     ?? 60,
             targetDurationMs:  s.playlistDurationMs ?? 2 * 60 * 60 * 1000,
+        });
+
+        // Remember the pool size so Settings can show the cooldown recommendation without
+        // re-scanning the library. Counts artists that could actually contribute a track.
+        settings.save({
+            lastArtistPoolSize: effectiveFollowedArtists.filter(
+                a => (effectiveTracksByArtist[a.id] || []).length > 0
+            ).length,
         });
 
         if (result.tracks.length === 0) {
@@ -482,7 +492,7 @@ async function buildFlow() {
         }
 
         // Record to cooldown history
-        history.record(result.tracks, cooldownN);
+        history.record(result.tracks);
 
         // ── Step 6: Show success ──────────────────────────────────────────────
         showSuccess({
@@ -603,27 +613,53 @@ function loadSettingsUI() {
         });
     }
 
-    // Cooldown playlists stepper
-    const cooldownEl    = document.getElementById('cooldown-value');
-    const cooldownDecEl = document.getElementById('btn-cooldown-dec');
-    const cooldownIncEl = document.getElementById('btn-cooldown-inc');
-    let cooldownVal = s.cooldownPlaylists ?? 2;
-    function updateCooldownUI() {
-        if (cooldownEl) cooldownEl.textContent = cooldownVal === 0 ? 'Off' : `${cooldownVal}`;
-        if (cooldownDecEl) cooldownDecEl.disabled = cooldownVal === 0;
-        if (cooldownIncEl) cooldownIncEl.disabled = cooldownVal === 5;
+    // ── Cooldown sliders ─────────────────────────────────────────────────────
+    // Song and artist cooldown are independent. The artist recommendation is exact — it mirrors
+    // the engine's own starvation-floor math — so it also depends on the target duration and is
+    // refreshed whenever the duration slider moves.
+    const artistRecEl = document.getElementById('artist-cooldown-rec');
+
+    function refreshArtistRecommendation() {
+        if (!artistRecEl) return;
+        const cur = settings.get();
+        const pool = cur.lastArtistPoolSize ?? 0;
+        if (pool <= 0) {
+            // No build yet — nothing to base a recommendation on.
+            artistRecEl.textContent = 'Build a playlist once and a recommendation will appear here.';
+            return;
+        }
+        const rec = Math.min(30, Math.max(1,
+            maxSustainableCooldown(pool, cur.playlistDurationMs ?? 2 * 60 * 60 * 1000)));
+        const hrs = ((cur.playlistDurationMs ?? 7_200_000) / 3_600_000).toFixed(1);
+        const chosen = cur.artistCooldownPlaylists ?? 5;
+        artistRecEl.textContent = chosen > rec
+            ? `Recommended: ${rec} — what ${pool} artists sustain for a ${hrs} hr playlist. ` +
+              `Past that the pool would starve, so ${chosen} behaves like ${rec}.`
+            : `Recommended: ${rec} — what ${pool} artists sustain for a ${hrs} hr playlist.`;
     }
-    cooldownDecEl?.addEventListener('click', () => {
-        cooldownVal = Math.max(0, cooldownVal - 1);
-        settings.save({ cooldownPlaylists: cooldownVal });
-        updateCooldownUI();
-    });
-    cooldownIncEl?.addEventListener('click', () => {
-        cooldownVal = Math.min(5, cooldownVal + 1);
-        settings.save({ cooldownPlaylists: cooldownVal });
-        updateCooldownUI();
-    });
-    updateCooldownUI();
+
+    function wireCooldownSlider(inputId, valueId, settingKey, fallback, onChange) {
+        const el    = document.getElementById(inputId);
+        const valEl = document.getElementById(valueId);
+        if (!el) return;
+        const initial = s[settingKey] ?? fallback;
+        el.value = initial;
+        if (valEl) valEl.textContent = `${initial}`;
+        el.addEventListener('input', () => {
+            const v = parseInt(el.value, 10);
+            if (valEl) valEl.textContent = `${v}`;
+            settings.save({ [settingKey]: v });
+            onChange?.();
+        });
+    }
+
+    wireCooldownSlider('input-song-cooldown', 'song-cooldown-value', 'cooldownPlaylists', 5);
+    wireCooldownSlider('input-artist-cooldown', 'artist-cooldown-value',
+        'artistCooldownPlaylists', 5, refreshArtistRecommendation);
+    refreshArtistRecommendation();
+
+    // A longer playlist consumes more artists per build, so it sustains a shorter cooldown.
+    durEl?.addEventListener('input', refreshArtistRecommendation);
 
     // Liked songs explore toggle
     const exploreEl = document.getElementById('input-explore');

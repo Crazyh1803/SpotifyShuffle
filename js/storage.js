@@ -27,9 +27,16 @@ const SETTINGS_DEFAULTS = {
     clientId: '',
     discoveryBias: 60,
     playlistDurationMs: 2 * 60 * 60 * 1000,  // 2 hours
-    cooldownPlaylists: 2,
-    artistCooldownPlaylists: 2,
+    /** Song/track cooldown: how many past playlists a TRACK skips before it's eligible again. */
+    cooldownPlaylists: 5,
+    /** Artist cooldown: how many past playlists an ARTIST skips. Independent of the song value. */
+    artistCooldownPlaylists: 5,
     likedSongsExploreMode: false,
+    /**
+     * Artists from the last build that could actually contribute a track. Persisted so Settings
+     * can show the cooldown recommendation without re-running a full library scan.
+     */
+    lastArtistPoolSize: 0,
 };
 
 export const settings = {
@@ -75,30 +82,41 @@ export const playlistId = {
 };
 
 // ── History / Cooldown ────────────────────────────────────────────────────────
-// Structure: { playlists: [ { trackIds: string[], artistIds: string[] } ] }
+// Structure: { playlists: [ { trackIds: string[], artistIds: string[] } ] }, newest first.
+
+/** Playlist snapshots retained. Must be ≥ the largest cooldown setting (song cooldown, 50). */
+const MAX_STORED = 50;
 
 export const history = {
     get: () => load(KEYS.history, { playlists: [] }),
     save: (data) => save(KEYS.history, data),
     clear: () => localStorage.removeItem(KEYS.history),
 
-    record(tracks, cooldownN) {
+    record(tracks) {
         const h = history.get();
         const entry = {
             trackIds: tracks.map(t => t.id),
             artistIds: [...new Set(tracks.flatMap(t => t.artists.map(a => a.id)))],
         };
         h.playlists.unshift(entry);
-        if (h.playlists.length > 20) h.playlists = h.playlists.slice(0, 20); // cap at 20
+        // Must cover the largest song-cooldown setting (50); each entry is only ID lists.
+        if (h.playlists.length > MAX_STORED) h.playlists = h.playlists.slice(0, MAX_STORED);
         history.save(h);
     },
 
-    getCooldownSets(cooldownN) {
-        const h = history.get();
-        const recent = h.playlists.slice(0, cooldownN);
-        const trackIds = new Set(recent.flatMap(p => p.trackIds));
-        const artistIds = new Set(recent.flatMap(p => p.artistIds));
-        return { trackIds, artistIds };
+    /** Track IDs from the last [n] playlists — the song cooldown set. */
+    getCooldownTrackIds(n) {
+        const recent = history.get().playlists.slice(0, n);
+        return new Set(recent.flatMap(p => p.trackIds));
+    },
+
+    /**
+     * Artist IDs from the last [n] playlists as one Set per playlist, MOST-RECENT FIRST.
+     * The engine needs them separated (not flattened) so its adaptive cooldown can drop whole
+     * playlists off the back when suppressing them all would starve the artist pool.
+     */
+    getRecentArtistSets(n) {
+        return history.get().playlists.slice(0, n).map(p => new Set(p.artistIds));
     },
 };
 
