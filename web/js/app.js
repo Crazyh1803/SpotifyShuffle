@@ -1,10 +1,11 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=20';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=20';
-import * as api from './api.js?v=20';
-import { buildPlaylist, maxSustainableCooldown } from './engine.js?v=20';
+import { startAuth, getRedirectUri } from './auth.js?v=21';
+import { tokens, settings, gapCache, playlistId, history, artistLibrary, playlistLog, clearAll }
+    from './storage.js?v=21';
+import * as api from './api.js?v=21';
+import { buildPlaylist, maxSustainableCooldown, tierOf } from './engine.js?v=21';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -35,7 +36,9 @@ function setProgressText(txt) {
 
 // ── Track helper ──────────────────────────────────────────────────────────────
 
-// Store only the fields the engine needs — keeps localStorage cache small
+// Store only the fields the engine and the playlist-log export need — keeps the cache small.
+// Album name/date are carried purely for the export; entries cached before they were added
+// simply export as blank until the next rescan.
 function minifyTrack(t) {
     return {
         id:          t.id,
@@ -43,6 +46,7 @@ function minifyTrack(t) {
         duration_ms: t.duration_ms,
         popularity:  t.popularity ?? 0,
         artists:     (t.artists || []).map(a => ({ id: a.id, name: a.name })),
+        album:       t.album ? { name: t.album.name, release_date: t.album.release_date } : undefined,
     };
 }
 
@@ -506,6 +510,23 @@ async function buildFlow() {
         // Remember the name Spotify now holds, so later builds skip the rename call.
         settings.save({ appliedPlaylistName: playlistName });
 
+        // Snapshot the library so the exports have something to describe between builds.
+        artistLibrary.save({
+            followedArtists: followedArtists.map(a => ({ id: a.id, name: a.name })),
+            topArtistIds:    [...topIds],
+            lastRefreshedMs: Date.now(),
+            lastScan:        window.__scanProgress ?? null,
+        });
+
+        // Record the full playlist to the analysis log (separate from cooldown history).
+        playlistLog.record(buildPlaylistLogEntry({
+            tracks: result.tracks,
+            discoveryIds, topIds, likedIds,
+            discoveryBias:    s.discoveryBias ?? 60,
+            targetDurationMs: s.playlistDurationMs ?? 2 * 60 * 60 * 1000,
+            songCooldownN, artistCooldownN,
+        }));
+
         // Record to cooldown history
         history.record(result.tracks);
 
@@ -716,11 +737,216 @@ function loadSettingsUI() {
         });
     }
 
+    // Exports
+    wireExportButton('btn-export-artists',  exportArtistList,  'No artists yet');
+    wireExportButton('btn-export-diag',     exportDiagnostics, 'Export failed');
+    wireExportButton('btn-export-playlists', exportPlaylistLog, 'No builds logged yet');
+
+    const clearLogBtn = document.getElementById('btn-clear-playlist-log');
+    if (clearLogBtn) {
+        clearLogBtn.addEventListener('click', () => {
+            playlistLog.clear();
+            clearLogBtn.textContent = 'Log cleared ✓';
+            setTimeout(() => { clearLogBtn.textContent = 'Clear playlist log'; }, 2000);
+        });
+    }
+
     // Change client ID link
     document.getElementById('btn-change-client-id')?.addEventListener('click', () => {
         document.getElementById('settings-overlay')?.classList.remove('open');
         document.getElementById('input-client-id').value = settings.get().clientId;
         showScreen('screen-setup');
+    });
+}
+
+// ── Exports ───────────────────────────────────────────────────────────────────
+// Browser equivalents of the Android app's three exports. Everything is built from
+// localStorage and downloaded client-side — nothing is uploaded anywhere, and none of
+// these files contain the Client ID or any OAuth token.
+
+/** Triggers a client-side file download. */
+function downloadFile(fileName, mimeType, content) {
+    const url = URL.createObjectURL(new Blob([content], { type: `${mimeType};charset=utf-8` }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on the next tick — revoking synchronously can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Escapes a CSV cell: quote-wrap and double inner quotes when it contains , " or a newline. */
+function csvCell(value) {
+    const s = String(value ?? '');
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+const pad = (n) => String(n).padStart(2, '0');
+function stamp(withTime) {
+    const d = new Date();
+    const date = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+    return withTime ? `${date}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}` : date;
+}
+
+/**
+ * Builds one playlist-log entry from a finished build. Mirrors buildPlaylistLogEntry in the
+ * Android app so both platforms' exports have identical columns and tier classification.
+ */
+function buildPlaylistLogEntry({
+    tracks, discoveryIds, topIds, likedIds,
+    discoveryBias, targetDurationMs, songCooldownN, artistCooldownN,
+}) {
+    const now = Date.now();
+    const trackLogs = tracks.map(t => {
+        const primary = (t.artists || [])[0];
+        return {
+            trackId:     t.id,
+            trackName:   t.name ?? '',
+            artistId:    primary?.id ?? '',
+            artistName:  primary?.name ?? '',
+            albumName:   t.album?.name ?? '',
+            releaseDate: t.album?.release_date ?? '',
+            popularity:  t.popularity ?? 0,
+            durationMs:  t.duration_ms ?? 0,
+            tier:        tierOf(t, discoveryIds, topIds),
+            liked:       likedIds.has(t.id),
+        };
+    });
+    return {
+        timestampMs: now,
+        timestampIso: new Date(now).toISOString(),
+        source: 'manual',                 // the web app has no background rebuild
+        discoveryBias,
+        targetDurationMs,
+        songCooldownPlaylists: songCooldownN,
+        artistCooldownPlaylists: artistCooldownN,
+        trackCount: trackLogs.length,
+        artistCount: new Set(tracks.flatMap(t => (t.artists || []).map(a => a.id))).size,
+        tierACount: trackLogs.filter(t => t.tier === 'A').length,
+        tierBCount: trackLogs.filter(t => t.tier === 'B').length,
+        tierCCount: trackLogs.filter(t => t.tier === 'C').length,
+        tracks: trackLogs,
+    };
+}
+
+/** Followed artist names, one per line. Returns the file name, or null when empty. */
+function exportArtistList() {
+    const names = [...new Set(artistLibrary.get().followedArtists.map(a => a.name))].sort();
+    if (names.length === 0) return null;
+    const fileName = `shuffle_all_artists_${stamp(false)}.csv`;
+    downloadFile(fileName, 'text/csv', names.join('\n'));
+    return fileName;
+}
+
+/** Library/cache/settings snapshot for bug reports. Never includes the Client ID or tokens. */
+function exportDiagnostics() {
+    const lib      = artistLibrary.get();
+    const cache    = gapCache.get();
+    const s        = settings.get();
+    const entries  = Object.values(cache);
+    const now      = Date.now();
+
+    const scanned   = entries.filter(e => e.scannedAtMs > 0).length;
+    const empty     = entries.filter(e => e.scannedAtMs > 0 && (e.tracks || []).length === 0).length;
+    const unscanned = entries.filter(e => e.scannedAtMs === 0).length;
+    const neverAttempted = Math.max(0, lib.followedArtists.length - entries.length);
+    const progress  = window.__scanProgress ?? lib.lastScan;
+
+    const lines = [
+        '=== True Shuffle Diagnostics (Web) ===',
+        `Generated : ${new Date().toISOString()}`,
+        '',
+        '--- Library ---',
+        `Followed artists : ${lib.followedArtists.length}`,
+        `Top artists      : ${lib.topArtistIds.length}`,
+        `Last refreshed   : ${lib.lastRefreshedMs ? new Date(lib.lastRefreshedMs).toISOString() : 'never'}`,
+        '',
+        '--- Gap Artist Cache ---',
+        `Total entries    : ${entries.length}`,
+        `Never attempted  : ${neverAttempted}  (no cache entry yet)`,
+        `Scanned          : ${scanned}`,
+        `  of which empty : ${empty}  (scanned but no accessible tracks)`,
+        `Unscanned (retry): ${unscanned}  (attempted but result was 0 timestamp)`,
+        '',
+        '--- Scan Progress ---',
+        progress
+            ? `Scanned / Total  : ${progress.scanned} / ${progress.total}\nComplete         : ${progress.scanned >= progress.total}`
+            : 'No build completed yet',
+        '',
+        '--- Settings ---',
+        `Discovery bias         : ${s.discoveryBias}%`,
+        `Playlist duration      : ${Math.round((s.playlistDurationMs ?? 0) / 60000)} min`,
+        `Song cooldown          : ${s.cooldownPlaylists} playlists`,
+        `Artist cooldown        : ${s.artistCooldownPlaylists} playlists`,
+        `Playlist name          : ${settings.resolvedPlaylistName()}`,
+        `Liked-songs explore    : ${s.likedSongsExploreMode ? 'On' : 'Off'}`,
+        '',
+        '--- Browser ---',
+        `User agent       : ${navigator.userAgent}`,
+        `Language         : ${navigator.language}`,
+        `Playlist log     : ${playlistLog.get().entries.length} builds recorded`,
+    ];
+
+    const fileName = `trueshuffle_diag_${stamp(true)}.txt`;
+    downloadFile(fileName, 'text/plain', lines.join('\n'));
+    return fileName;
+}
+
+/**
+ * Playlist log as a flat CSV (one row per track, build fields repeated) plus the lossless
+ * JSON. Same columns as the Android export so one analysis script reads both.
+ */
+function exportPlaylistLog() {
+    const log = playlistLog.get();
+    if (log.entries.length === 0) return null;
+
+    const header = [
+        'build_timestamp', 'source', 'discovery_bias', 'target_duration_min',
+        'song_cooldown_playlists', 'artist_cooldown_playlists',
+        'build_track_count', 'build_artist_count',
+        'build_tier_a', 'build_tier_b', 'build_tier_c',
+        'track_name', 'artist_name', 'album_name', 'release_date',
+        'popularity', 'duration_ms', 'tier', 'liked', 'track_id', 'artist_id',
+    ];
+    const rows = [header.join(',')];
+    for (const e of log.entries) {
+        for (const t of e.tracks) {
+            rows.push([
+                e.timestampIso, e.source, e.discoveryBias,
+                Math.round(e.targetDurationMs / 60000),
+                e.songCooldownPlaylists, e.artistCooldownPlaylists,
+                e.trackCount, e.artistCount,
+                e.tierACount, e.tierBCount, e.tierCCount,
+                csvCell(t.trackName), csvCell(t.artistName), csvCell(t.albumName),
+                csvCell(t.releaseDate), t.popularity, t.durationMs,
+                t.tier, t.liked, t.trackId, t.artistId,
+            ].join(','));
+        }
+    }
+
+    const ts = stamp(true);
+    const csvName = `trueshuffle_playlists_${ts}.csv`;
+    downloadFile(csvName, 'text/csv', rows.join('\n'));
+    downloadFile(`trueshuffle_playlists_${ts}.json`, 'application/json', JSON.stringify(log, null, 2));
+    return csvName;
+}
+
+/** Wires an export button, showing the result inline on the button itself. */
+function wireExportButton(id, exportFn, emptyMessage) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    const label = btn.textContent;
+    btn.addEventListener('click', () => {
+        let ok = false;
+        try {
+            ok = !!exportFn();
+        } catch (e) {
+            console.error('Export failed:', e);
+        }
+        btn.textContent = ok ? 'Exported ✓' : emptyMessage;
+        setTimeout(() => { btn.textContent = label; }, 2500);
     });
 }
 

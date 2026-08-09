@@ -6,6 +6,8 @@ const KEYS = {
     gapCache: 'trueshuffle_gap_cache',
     history:  'trueshuffle_history',
     playlistId: 'trueshuffle_playlist_id',
+    artistLibrary: 'trueshuffle_artist_library',
+    playlistLog:   'trueshuffle_playlist_log',
 };
 
 function load(key, defaults) {
@@ -144,6 +146,44 @@ export const history = {
     },
 };
 
+// ── Artist Library ────────────────────────────────────────────────────────────
+// Snapshot of the last build's library, kept so the exports and the cooldown
+// recommendation have something to describe without re-running a full scan.
+// Structure: { followedArtists: [{id,name}], topArtistIds: string[],
+//              lastRefreshedMs: number, lastScan: { scanned, total } | null }
+
+const ARTIST_LIBRARY_DEFAULTS = {
+    followedArtists: [],
+    topArtistIds: [],
+    lastRefreshedMs: 0,
+    lastScan: null,
+};
+
+export const artistLibrary = {
+    get: () => load(KEYS.artistLibrary, ARTIST_LIBRARY_DEFAULTS),
+    save: (partial) => save(KEYS.artistLibrary, { ...artistLibrary.get(), ...partial }),
+    clear: () => localStorage.removeItem(KEYS.artistLibrary),
+};
+
+// ── Playlist Log ──────────────────────────────────────────────────────────────
+// Analysis-oriented record of every build: the settings in effect plus every track.
+// Distinct from `history` above, which stores ID-only snapshots for cooldown.
+
+/** Builds retained in the log. Matches MAX_LOGGED in the Android PlaylistLogStorage. */
+const MAX_LOGGED = 50;
+
+export const playlistLog = {
+    get: () => load(KEYS.playlistLog, { entries: [] }),
+    clear: () => localStorage.removeItem(KEYS.playlistLog),
+
+    /** Prepends a build entry and trims to MAX_LOGGED (most recent first). */
+    record(entry) {
+        const log = playlistLog.get();
+        log.entries = [entry, ...log.entries].slice(0, MAX_LOGGED);
+        save(KEYS.playlistLog, log);
+    },
+};
+
 // ── Full clear (logout) ───────────────────────────────────────────────────────
 
 export function clearAll() {
@@ -151,5 +191,7 @@ export function clearAll() {
     gapCache.clear();
     history.clear();
     playlistId.clear();
+    artistLibrary.clear();
+    playlistLog.clear();
     // Keep settings (client ID, preferences)
 }
