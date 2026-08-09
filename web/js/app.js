@@ -1,10 +1,10 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=19';
-import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=19';
-import * as api from './api.js?v=19';
-import { buildPlaylist, maxSustainableCooldown } from './engine.js?v=19';
+import { startAuth, getRedirectUri } from './auth.js?v=20';
+import { tokens, settings, gapCache, playlistId, history, clearAll } from './storage.js?v=20';
+import * as api from './api.js?v=20';
+import { buildPlaylist, maxSustainableCooldown } from './engine.js?v=20';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -444,6 +444,7 @@ async function buildFlow() {
         setStatus('Saving playlist to Spotify…');
         const uris = result.tracks.map(t => `spotify:track:${t.id}`);
         const desc = `Built by True Shuffle • ${new Date().toLocaleDateString()}`;
+        const playlistName = settings.resolvedPlaylistName();
         let pid = playlistId.get();
         let playlistUrl;
 
@@ -459,6 +460,17 @@ async function buildFlow() {
         if (pid) {
             try {
                 await pushTracks(pid, uris);
+                // Apply a rename to the existing playlist. Skipped unless the name actually
+                // changed, so the normal rebuild path costs no extra API call.
+                if (playlistName !== s.appliedPlaylistName) {
+                    try {
+                        await api.changePlaylistDetails(pid, playlistName, desc);
+                    } catch (e) {
+                        if (e.status === 401) throw e;
+                        // Non-fatal: the tracks are already saved, only the name is stale.
+                        console.warn('Playlist rename failed (non-fatal):', e.message);
+                    }
+                }
                 await api.followPlaylist(pid);
                 playlistUrl = `https://open.spotify.com/playlist/${pid}`;
             } catch (e) {
@@ -473,7 +485,7 @@ async function buildFlow() {
         if (!pid) {
             let step = 'createPlaylist';
             try {
-                const pl = await api.createPlaylist(user.id, 'True Shuffle', desc);
+                const pl = await api.createPlaylist(user.id, playlistName, desc);
                 playlistId.save(pl.id);
                 pid = pl.id;
                 step = 'replacePlaylistTracks';
@@ -490,6 +502,9 @@ async function buildFlow() {
                 throw e;
             }
         }
+
+        // Remember the name Spotify now holds, so later builds skip the rename call.
+        settings.save({ appliedPlaylistName: playlistName });
 
         // Record to cooldown history
         history.record(result.tracks);
@@ -597,6 +612,27 @@ function loadSettingsUI() {
             if (biasValEl) biasValEl.textContent = `${v}%`;
             settings.save({ discoveryBias: v });
         });
+    }
+
+    // Playlist name
+    const nameEl     = document.getElementById('input-playlist-name');
+    const nameHintEl = document.getElementById('playlist-name-hint');
+    if (nameEl) {
+        nameEl.value = s.playlistName ?? '';
+        const refreshNameHint = () => {
+            if (!nameHintEl) return;
+            const applied = settings.get().appliedPlaylistName;
+            const resolved = settings.resolvedPlaylistName();
+            // Only promise a rename when there's an existing playlist carrying a different name.
+            nameHintEl.textContent = (applied && applied !== resolved)
+                ? `Your next build will rename the playlist to "${resolved}".`
+                : `Saved to Spotify as "${resolved}".`;
+        };
+        nameEl.addEventListener('input', () => {
+            settings.save({ playlistName: nameEl.value });
+            refreshNameHint();
+        });
+        refreshNameHint();
     }
 
     // Playlist duration slider (hours)

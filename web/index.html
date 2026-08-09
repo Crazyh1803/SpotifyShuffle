@@ -199,7 +199,19 @@
                 <!-- Playlist Duration -->
                 <div class="setting-section">
                     <p class="setting-section-title">Playlist</p>
+
                     <div class="setting-row">
+                        <div>
+                            <div class="setting-row-label">Playlist name</div>
+                            <div class="setting-row-desc">What the playlist is called in Spotify</div>
+                        </div>
+                    </div>
+                    <input type="text" id="input-playlist-name"
+                           maxlength="100" placeholder="True Shuffle" autocomplete="off"
+                           aria-label="Playlist name">
+                    <div class="text-muted text-sm" id="playlist-name-hint" style="margin-top:6px;"></div>
+
+                    <div class="setting-row" style="margin-top:18px;">
                         <div>
                             <div class="setting-row-label">Target duration</div>
                             <div class="setting-row-desc">Approximate playlist length</div>
@@ -300,6 +312,6 @@
 
 </div><!-- /.app -->
 
-<script type="module" src="js/app.js?v=19"></script>
+<script type="module" src="js/app.js?v=20"></script>
 </body>
 </html>

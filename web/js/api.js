@@ -1,8 +1,8 @@
 // api.js — Spotify Web API wrapper
 // All calls go directly from the browser to api.spotify.com (CORS supported).
 
-import { tokens, settings } from './storage.js';
-import { refreshAccessToken } from './auth.js';
+import { tokens, settings } from './storage.js?v=20';
+import { refreshAccessToken } from './auth.js?v=20';
 
 const BASE = 'https://api.spotify.com/v1';
 
@@ -206,6 +206,18 @@ export async function createPlaylist(userId, name, description) {
         }
         throw e;
     }
+}
+
+/**
+ * Renames an existing playlist (and refreshes its description).
+ * Used when the user changes their playlist name in Settings — without this a rename would
+ * only apply to playlists created afterwards, leaving the existing one on its old name.
+ */
+export async function changePlaylistDetails(playlistId, name, description) {
+    return apiFetch(`/playlists/${playlistId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name, description }),
+    });
 }
 
 export async function replacePlaylistTracks(playlistId, uris) {
