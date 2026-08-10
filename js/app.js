@@ -1,12 +1,12 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=24';
+import { startAuth, getRedirectUri } from './auth.js?v=25';
 import { tokens, settings, gapCache, playlistId, history, artistLibrary, playlistLog,
-         clearAll, storageReport, GAP_TRACKS_PER_ARTIST } from './storage.js?v=24';
-import * as api from './api.js?v=24';
+         clearAll, storageReport, GAP_TRACKS_PER_ARTIST } from './storage.js?v=25';
+import * as api from './api.js?v=25';
 import { buildPlaylist, maxSustainableCooldown, maxSustainableSongCooldown, tierOf }
-    from './engine.js?v=24';
+    from './engine.js?v=25';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -725,14 +725,16 @@ function loadSettingsUI() {
             songRecEl.textContent = 'Build a playlist once and a recommendation will appear here.';
             return;
         }
-        const rec = Math.min(50, Math.max(1,
+        const rec = Math.min(100, Math.max(1,
             maxSustainableSongCooldown(pool, cur.playlistDurationMs ?? 7200000)));
         const chosen = cur.cooldownPlaylists ?? 5;
+        // Under the ceiling this is headroom, not a warning — lead with what the library
+        // supports so a setting well inside budget doesn't read as an overreach.
         songRecEl.textContent = chosen > rec
-            ? `Recommended: ${rec} — ${pool} tracks is about ${rec} playlists' worth. ` +
-              `A song never repeats inside your window, so past ${rec} builds start coming up short.`
-            : `Recommended up to ${rec} — ${pool} tracks is about ${rec} playlists' worth. ` +
-              `A song never repeats inside your window.`;
+            ? `Your ${pool} tracks cover about ${rec} builds. A song never repeats inside your ` +
+              `window, so at ${chosen} the last builds start coming up short.`
+            : `Your ${pool} tracks support up to ${rec} builds with no song repeating — ` +
+              `you're at ${chosen}.`;
     }
 
     function refreshArtistRecommendation() {
