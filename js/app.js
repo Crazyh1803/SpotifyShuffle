@@ -1,11 +1,11 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=21';
+import { startAuth, getRedirectUri } from './auth.js?v=22';
 import { tokens, settings, gapCache, playlistId, history, artistLibrary, playlistLog, clearAll }
-    from './storage.js?v=21';
-import * as api from './api.js?v=21';
-import { buildPlaylist, maxSustainableCooldown, tierOf } from './engine.js?v=21';
+    from './storage.js?v=22';
+import * as api from './api.js?v=22';
+import { buildPlaylist, maxSustainableCooldown, tierOf } from './engine.js?v=22';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -604,7 +604,19 @@ document.getElementById('btn-try-again')?.addEventListener('click', () => {
 
 // ── Settings Panel ────────────────────────────────────────────────────────────
 
+/**
+ * Settings widgets whose text depends on state that changes OUTSIDE the panel — a build
+ * updates the artist pool size and the applied playlist name. loadSettingsUI() only runs
+ * once at page load, so without re-running these on open the panel shows figures frozen at
+ * whatever they were when the page loaded.
+ */
+const settingsRefreshers = [];
+function refreshSettingsPanel() {
+    for (const fn of settingsRefreshers) fn();
+}
+
 document.getElementById('btn-settings')?.addEventListener('click', () => {
+    refreshSettingsPanel();
     document.getElementById('settings-overlay')?.classList.add('open');
 });
 
@@ -621,6 +633,7 @@ document.getElementById('settings-overlay')?.addEventListener('click', (e) => {
 
 function loadSettingsUI() {
     const s = settings.get();
+    settingsRefreshers.length = 0;   // idempotent if this is ever called more than once
 
     // Discovery bias slider
     const biasEl    = document.getElementById('input-bias');
@@ -653,6 +666,7 @@ function loadSettingsUI() {
             settings.save({ playlistName: nameEl.value });
             refreshNameHint();
         });
+        settingsRefreshers.push(refreshNameHint);
         refreshNameHint();
     }
 
@@ -713,6 +727,7 @@ function loadSettingsUI() {
     wireCooldownSlider('input-song-cooldown', 'song-cooldown-value', 'cooldownPlaylists', 5);
     wireCooldownSlider('input-artist-cooldown', 'artist-cooldown-value',
         'artistCooldownPlaylists', 5, refreshArtistRecommendation);
+    settingsRefreshers.push(refreshArtistRecommendation);
     refreshArtistRecommendation();
 
     // A longer playlist consumes more artists per build, so it sustains a shorter cooldown.
@@ -861,6 +876,12 @@ function exportDiagnostics() {
         '--- Library ---',
         `Followed artists : ${lib.followedArtists.length}`,
         `Top artists      : ${lib.topArtistIds.length}`,
+        // The pool the engine actually draws from (artists with ≥1 usable track), which is
+        // what drives the cooldown recommendation — not the raw follow count above it.
+        `Artist pool      : ${s.lastArtistPoolSize || 0}  (had tracks on the last build)`,
+        `Recommended artist cooldown : ${s.lastArtistPoolSize
+            ? Math.min(30, Math.max(1, maxSustainableCooldown(s.lastArtistPoolSize, s.playlistDurationMs ?? 7200000)))
+            : 'n/a'}`,
         `Last refreshed   : ${lib.lastRefreshedMs ? new Date(lib.lastRefreshedMs).toISOString() : 'never'}`,
         '',
         '--- Gap Artist Cache ---',
