@@ -60,6 +60,20 @@ export function maxSustainableCooldown(poolArtistCount, targetDurationMs) {
 }
 
 /**
+ * How many consecutive playlists the pool can fill with NO song repeating, given the target
+ * duration. Song cooldown is a hard rule, so this is simply how many builds' worth of distinct
+ * tracks exist: past it, builds start coming up short rather than repeating.
+ *
+ * An upper bound — artist cooldown and tier interleaving mean not every track is reachable in
+ * every build — but it's the honest ceiling, and unlike a per-artist average it's expressed in
+ * the same unit as the setting itself.
+ */
+export function maxSustainableSongCooldown(totalTrackCount, targetDurationMs) {
+    const tracksPerBuild = Math.max(1, Math.floor(targetDurationMs / AVG_TRACK_MS));
+    return Math.max(0, Math.floor(totalTrackCount / tracksPerBuild));
+}
+
+/**
  * Classifies a track into "A", "B" or "C" with priority C > A > B. Checks ALL of a track's
  * artists, not just the primary — gap-fill tracks sometimes list a featured artist first, which
  * would otherwise misclassify a discovery track as Tier B.
@@ -146,20 +160,26 @@ function adaptiveArtistCooldown(recentArtistSets, poolArtistIds, neededArtists) 
 }
 
 /**
- * Selects one track for an artist using a three-level preference:
- *   1. fresh + non-liked, 2. fresh only, 3. everything (last resort)
+ * Selects one track for an artist, or null if the artist has nothing eligible.
  *
- * isRareArtist (Tier B/C) prefers non-liked tracks so album deep cuts surface. Tier A skips that
- * filter — top artists are expected favourites and filtering liked tracks would leave very little.
- * Both then apply an x² bias over ascending effective popularity.
+ * The song cooldown is a HARD constraint: a track inside the cooldown window is never returned,
+ * even if that means this artist contributes nothing to the build. "Cooldown 39" means a song
+ * cannot reappear within 39 playlists, full stop — so the caller skips the artist rather than
+ * reaching for a track the user has explicitly excluded.
+ *
+ * The liked-track preference stays SOFT. isRareArtist (Tier B/C) prefers non-liked tracks so
+ * album deep cuts surface, but falls back to liked ones rather than dropping the artist. Tier A
+ * skips that filter entirely — top artists are expected favourites.
+ *
+ * Whatever pool survives then gets an x² bias over ascending effective popularity.
  */
 function selectTrack(tracks, isRareArtist, likedIds, cooldownIds) {
-    const notCooldown = (t) => !cooldownIds.has(t.id);
-    const notLiked    = (t) => !likedIds.has(t.id);
+    // Hard gate first — nothing below may reintroduce a cooled-down track.
+    const fresh = tracks.filter(t => !cooldownIds.has(t.id));
+    if (fresh.length === 0) return null;
 
-    let pool = tracks.filter(t => notCooldown(t) && (isRareArtist ? notLiked(t) : true));
-    if (pool.length === 0) pool = tracks.filter(notCooldown);
-    if (pool.length === 0) pool = [...tracks];
+    let pool = isRareArtist ? fresh.filter(t => !likedIds.has(t.id)) : fresh;
+    if (pool.length === 0) pool = fresh;
 
     if (pool.length === 1) return pool[0];
 
@@ -214,7 +234,10 @@ export function buildPlaylist({
 
     const artistsWithTracks = followedArtists.filter(a => filtered[a.id]?.length > 0);
     if (artistsWithTracks.length === 0) {
-        return { tracks: [], tierACount: 0, tierBCount: 0, tierCCount: 0, artistCooldownApplied: 0 };
+        return {
+            tracks: [], tierACount: 0, tierBCount: 0, tierCCount: 0,
+            artistCooldownApplied: 0, shortOfTarget: true, durationMs: 0,
+        };
     }
 
     // Adaptive artist cooldown: suppress artists from the most-recent playlists first (all
@@ -244,6 +267,7 @@ export function buildPlaylist({
         if (!tracks) continue;
 
         const track = selectTrack(tracks, !topIds.has(artist.id), likedIds, cooldownTrackIds);
+        if (!track) continue;   // every track this artist has is inside the cooldown window
         playlist.push(track);
         totalMs += track.duration_ms ?? 0;
     }
@@ -259,6 +283,7 @@ export function buildPlaylist({
             if (available.length === 0) continue;
 
             const track = selectTrack(available, !topIds.has(artist.id), likedIds, cooldownTrackIds);
+            if (!track) continue;
             playlist.push(track);
             usedIds.add(track.id);
             totalMs += track.duration_ms ?? 0;
@@ -279,5 +304,9 @@ export function buildPlaylist({
         tracks: playlist,
         tierACount, tierBCount, tierCCount,
         artistCooldownApplied: cooldownArtistIds.size,
+        // True when the hard song cooldown left too few eligible tracks to fill the target.
+        // The caller surfaces this rather than silently handing back a short playlist.
+        shortOfTarget: totalMs < targetDurationMs,
+        durationMs: totalMs,
     };
 }

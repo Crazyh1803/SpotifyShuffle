@@ -1,11 +1,12 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=23';
-import { tokens, settings, gapCache, playlistId, history, artistLibrary, playlistLog, clearAll }
-    from './storage.js?v=23';
-import * as api from './api.js?v=23';
-import { buildPlaylist, maxSustainableCooldown, tierOf } from './engine.js?v=23';
+import { startAuth, getRedirectUri } from './auth.js?v=24';
+import { tokens, settings, gapCache, playlistId, history, artistLibrary, playlistLog,
+         clearAll, storageReport, GAP_TRACKS_PER_ARTIST } from './storage.js?v=24';
+import * as api from './api.js?v=24';
+import { buildPlaylist, maxSustainableCooldown, maxSustainableSongCooldown, tierOf }
+    from './engine.js?v=24';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -285,7 +286,8 @@ async function buildFlow() {
                         // here with a single call.
                         if (!rateLimited) {
                             try {
-                                const searchRes = await api.searchTracks(`artist:"${artist.name}"`, 10, user.country);
+                                const searchRes = await api.searchTracks(
+                                    `artist:"${artist.name}"`, GAP_TRACKS_PER_ARTIST, user.country);
                                 const filtered = (searchRes.tracks?.items || [])
                                     .filter(t => (t.artists || []).some(a => a.id === artist.id))
                                     .map(t => minifyTrack(t));
@@ -433,10 +435,17 @@ async function buildFlow() {
 
         // Remember the pool size so Settings can show the cooldown recommendation without
         // re-scanning the library. Counts artists that could actually contribute a track.
+        const poolArtists = effectiveFollowedArtists.filter(
+            a => (effectiveTracksByArtist[a.id] || []).length > 0);
+        // Distinct tracks across the whole pool — drives the song-cooldown recommendation,
+        // which is now a hard no-repeat guarantee rather than a preference.
+        const distinctTrackIds = new Set();
+        for (const a of poolArtists) {
+            for (const t of effectiveTracksByArtist[a.id]) distinctTrackIds.add(t.id);
+        }
         settings.save({
-            lastArtistPoolSize: effectiveFollowedArtists.filter(
-                a => (effectiveTracksByArtist[a.id] || []).length > 0
-            ).length,
+            lastArtistPoolSize: poolArtists.length,
+            lastTrackPoolSize:  distinctTrackIds.size,
         });
 
         if (result.tracks.length === 0) {
@@ -531,6 +540,22 @@ async function buildFlow() {
         history.record(result.tracks);
 
         // ── Step 6: Show success ──────────────────────────────────────────────
+        // A hard song cooldown can legitimately leave the build short: every remaining track is
+        // inside the user's no-repeat window. Say so rather than quietly returning a short list.
+        const shortEl = document.getElementById('short-notice');
+        if (shortEl) {
+            if (result.shortOfTarget) {
+                const mins = Math.round(result.durationMs / 60000);
+                shortEl.textContent =
+                    `Stopped at ${mins} min: every remaining song is still inside your ` +
+                    `${songCooldownN}-playlist cooldown. Lower it, or build again once the ` +
+                    `artist scan finishes.`;
+                shortEl.style.display = 'block';
+            } else {
+                shortEl.style.display = 'none';
+            }
+        }
+
         showSuccess({
             trackCount:        result.tracks.length,
             durationMs:        result.tracks.reduce((s, t) => s + (t.duration_ms || 0), 0),
@@ -690,6 +715,26 @@ function loadSettingsUI() {
     // refreshed whenever the duration slider moves.
     const artistRecEl = document.getElementById('artist-cooldown-rec');
 
+    const songRecEl = document.getElementById('song-cooldown-rec');
+
+    function refreshSongRecommendation() {
+        if (!songRecEl) return;
+        const cur = settings.get();
+        const pool = cur.lastTrackPoolSize ?? 0;
+        if (pool <= 0) {
+            songRecEl.textContent = 'Build a playlist once and a recommendation will appear here.';
+            return;
+        }
+        const rec = Math.min(50, Math.max(1,
+            maxSustainableSongCooldown(pool, cur.playlistDurationMs ?? 7200000)));
+        const chosen = cur.cooldownPlaylists ?? 5;
+        songRecEl.textContent = chosen > rec
+            ? `Recommended: ${rec} — ${pool} tracks is about ${rec} playlists' worth. ` +
+              `A song never repeats inside your window, so past ${rec} builds start coming up short.`
+            : `Recommended up to ${rec} — ${pool} tracks is about ${rec} playlists' worth. ` +
+              `A song never repeats inside your window.`;
+    }
+
     function refreshArtistRecommendation() {
         if (!artistRecEl) return;
         const cur = settings.get();
@@ -724,7 +769,10 @@ function loadSettingsUI() {
         });
     }
 
-    wireCooldownSlider('input-song-cooldown', 'song-cooldown-value', 'cooldownPlaylists', 5);
+    wireCooldownSlider('input-song-cooldown', 'song-cooldown-value', 'cooldownPlaylists', 5,
+        refreshSongRecommendation);
+    settingsRefreshers.push(refreshSongRecommendation);
+    refreshSongRecommendation();
     wireCooldownSlider('input-artist-cooldown', 'artist-cooldown-value',
         'artistCooldownPlaylists', 5, refreshArtistRecommendation);
     settingsRefreshers.push(refreshArtistRecommendation);
@@ -732,6 +780,7 @@ function loadSettingsUI() {
 
     // A longer playlist consumes more artists per build, so it sustains a shorter cooldown.
     durEl?.addEventListener('input', refreshArtistRecommendation);
+    durEl?.addEventListener('input', refreshSongRecommendation);
 
     // Liked songs explore toggle
     const exploreEl = document.getElementById('input-explore');
@@ -879,6 +928,7 @@ function exportDiagnostics() {
         // The pool the engine actually draws from (artists with ≥1 usable track), which is
         // what drives the cooldown recommendation — not the raw follow count above it.
         `Artist pool      : ${s.lastArtistPoolSize || 0}  (had tracks on the last build)`,
+        `Track pool       : ${s.lastTrackPoolSize || 0}  (distinct tracks available)`,
         `Recommended artist cooldown : ${s.lastArtistPoolSize
             ? Math.min(30, Math.max(1, maxSustainableCooldown(s.lastArtistPoolSize, s.playlistDurationMs ?? 7200000)))
             : 'n/a'}`,
@@ -908,6 +958,10 @@ function exportDiagnostics() {
         `User agent       : ${navigator.userAgent}`,
         `Language         : ${navigator.language}`,
         `Playlist log     : ${playlistLog.get().entries.length} builds recorded`,
+        `Local storage    : ${(storageReport().bytes / 1024).toFixed(0)} KB used`,
+        `Storage errors   : ${storageReport().lastQuotaError
+            ? `${storageReport().lastQuotaError.key} — ${storageReport().lastQuotaError.message}`
+            : 'none'}`,
     ];
 
     const fileName = `trueshuffle_diag_${stamp(true)}.txt`;
