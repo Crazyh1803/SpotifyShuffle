@@ -1,8 +1,8 @@
 // api.js — Spotify Web API wrapper
 // All calls go directly from the browser to api.spotify.com (CORS supported).
 
-import { tokens, settings } from './storage.js?v=22';
-import { refreshAccessToken } from './auth.js?v=22';
+import { tokens, settings } from './storage.js?v=23';
+import { refreshAccessToken } from './auth.js?v=23';
 
 const BASE = 'https://api.spotify.com/v1';
 
@@ -100,20 +100,27 @@ export async function getAllFollowedArtists() {
     return artists;
 }
 
+/**
+ * Tier A = the user's top artists. Long- and medium-term only, top 50 of each, matching the
+ * Android client.
+ *
+ * Deliberately NOT short_term (last 4 weeks) and deliberately not paginated past 50:
+ * Tier A is *deprioritised* in the shuffle, so every artist added here is one taken away from
+ * Tier B. Pulling 100 per range across three ranges classified over half a 298-artist library
+ * as "top", which starved Tier B to a couple of tracks per build. Including short_term is also
+ * backwards on its own terms — an artist discovered last month would be demoted as "frequently
+ * heard". Two calls instead of six is a welcome side effect given Spotify's rate limit.
+ */
 export async function getTopArtists() {
     const results = [];
-    for (const range of ['long_term', 'medium_term', 'short_term']) {
-        let offset = 0;
-        while (offset < 100) {
-            const res = await apiFetch(`/me/top/artists?time_range=${range}&limit=50&offset=${offset}`);
-            results.push(...res.items);
-            if (res.items.length < 50) break;
-            offset += 50;
+    const seen = new Set();
+    for (const range of ['long_term', 'medium_term']) {
+        const res = await apiFetch(`/me/top/artists?time_range=${range}&limit=50`);
+        for (const a of res.items) {
+            if (!seen.has(a.id)) { seen.add(a.id); results.push(a); }
         }
     }
-    // Deduplicate by id
-    const seen = new Set();
-    return results.filter(a => seen.has(a.id) ? false : seen.add(a.id));
+    return results;
 }
 
 export async function getTopTracks(timeRange = 'long_term') {
