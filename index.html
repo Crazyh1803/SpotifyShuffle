@@ -138,6 +138,7 @@
         <p id="success-track-count" class="text-muted"></p>
         <p id="success-tiers"></p>
         <p id="scan-progress" class="text-muted text-sm"></p>
+        <p id="short-notice" class="text-muted text-sm" style="display:none;max-width:280px;text-align:center;"></p>
 
         <div class="success-actions">
             <a id="success-link" href="#" target="_blank" rel="noopener">
@@ -234,7 +235,7 @@
                     <div class="setting-row">
                         <div>
                             <div class="setting-row-label">Song repeat cooldown</div>
-                            <div class="setting-row-desc">Avoid songs used in this many previous builds</div>
+                            <div class="setting-row-desc">A song will not repeat within this many builds</div>
                         </div>
                         <span class="setting-value" id="song-cooldown-value">5</span>
                     </div>
@@ -243,11 +244,12 @@
                         <span class="text-muted text-sm">1</span>
                         <span class="text-muted text-sm">50</span>
                     </div>
+                    <div class="text-muted text-sm" id="song-cooldown-rec" style="margin-top:8px;"></div>
 
                     <div class="setting-row" style="margin-top:18px;">
                         <div>
                             <div class="setting-row-label">Artist repeat cooldown</div>
-                            <div class="setting-row-desc">Avoid artists used in this many previous builds</div>
+                            <div class="setting-row-desc">Artists are held back this long where the pool allows</div>
                         </div>
                         <span class="setting-value" id="artist-cooldown-value">5</span>
                     </div>
@@ -330,6 +332,6 @@
 
 </div><!-- /.app -->
 
-<script type="module" src="js/app.js?v=23"></script>
+<script type="module" src="js/app.js?v=24"></script>
 </body>
 </html>

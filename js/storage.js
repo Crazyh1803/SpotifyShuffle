@@ -19,8 +19,28 @@ function load(key, defaults) {
     }
 }
 
+/** Records the most recent quota failure so diagnostics can report it instead of hiding it. */
+let lastQuotaError = null;
+
+/** @returns true if the write landed, false if storage rejected it (usually quota). */
 function save(key, value) {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* quota exceeded — ignore */ }
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+        return true;
+    } catch (e) {
+        lastQuotaError = { key, at: Date.now(), message: e?.message ?? String(e) };
+        console.warn(`[storage] write to "${key}" failed:`, e?.message ?? e);
+        return false;
+    }
+}
+
+/** Approximate bytes currently used by this app's keys, plus any recent quota failure. */
+export function storageReport() {
+    let bytes = 0;
+    for (const key of Object.values(KEYS)) {
+        bytes += (localStorage.getItem(key) || '').length;
+    }
+    return { bytes, lastQuotaError };
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -47,6 +67,8 @@ const SETTINGS_DEFAULTS = {
      * can show the cooldown recommendation without re-running a full library scan.
      */
     lastArtistPoolSize: 0,
+    /** Distinct tracks across the pool on the last build — drives the song-cooldown ceiling. */
+    lastTrackPoolSize: 0,
 };
 
 /** Used whenever the user hasn't set a name of their own. */
@@ -85,9 +107,39 @@ export const tokens = {
 // ── Gap Artist Cache ──────────────────────────────────────────────────────────
 // Structure: { [artistId]: { tracks: Track[], scannedAtMs: number } }
 
+/**
+ * Tracks fetched and cached per gap (discovery) artist. This is the entire pool a Tier C artist
+ * ever draws from until a manual rescan, so a small number means the same handful of songs
+ * recycle. Spotify's search endpoint returns up to 50 for the same single API call, so raising
+ * this costs storage, not rate limit.
+ */
+export const GAP_TRACKS_PER_ARTIST = 25;
+
+/**
+ * Saves the gap cache, progressively trimming tracks-per-artist if the browser rejects the
+ * write. localStorage is ~5 MB and shared with the playlist log, so a deep per-artist cache can
+ * tip a large library over. Trimming degrades to fewer deep cuts; silently failing to persist
+ * would be far worse, since every build would then rescan from scratch and hit the rate limit.
+ */
+function saveGapCache(cache) {
+    if (save(KEYS.gapCache, cache)) return true;
+    for (const cap of [15, 10, 5]) {
+        const trimmed = {};
+        for (const [id, entry] of Object.entries(cache)) {
+            trimmed[id] = { ...entry, tracks: (entry.tracks || []).slice(0, cap) };
+        }
+        if (save(KEYS.gapCache, trimmed)) {
+            console.warn(`[storage] gap cache trimmed to ${cap} tracks/artist to fit quota`);
+            return true;
+        }
+    }
+    console.error('[storage] gap cache could not be saved even after trimming');
+    return false;
+}
+
 export const gapCache = {
     get: () => load(KEYS.gapCache, {}),
-    save: (cache) => save(KEYS.gapCache, cache),
+    save: (cache) => saveGapCache(cache),
     clear: () => localStorage.removeItem(KEYS.gapCache),
     clearTimestamps: () => {
         const cache = gapCache.get();
@@ -176,11 +228,23 @@ export const playlistLog = {
     get: () => load(KEYS.playlistLog, { entries: [] }),
     clear: () => localStorage.removeItem(KEYS.playlistLog),
 
-    /** Prepends a build entry and trims to MAX_LOGGED (most recent first). */
+    /**
+     * Prepends a build entry and trims to MAX_LOGGED (most recent first).
+     * The log is the first thing sacrificed under storage pressure — it is analysis data, while
+     * the gap cache is what keeps builds cheap — so on a quota failure it drops older entries
+     * rather than letting the write fail.
+     */
     record(entry) {
         const log = playlistLog.get();
         log.entries = [entry, ...log.entries].slice(0, MAX_LOGGED);
-        save(KEYS.playlistLog, log);
+        if (save(KEYS.playlistLog, log)) return true;
+        for (const cap of [25, 10, 5, 1]) {
+            if (save(KEYS.playlistLog, { entries: log.entries.slice(0, cap) })) {
+                console.warn(`[storage] playlist log trimmed to ${cap} builds to fit quota`);
+                return true;
+            }
+        }
+        return false;
     },
 };
 
