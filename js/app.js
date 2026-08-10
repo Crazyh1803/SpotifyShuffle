@@ -1,11 +1,11 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=22';
+import { startAuth, getRedirectUri } from './auth.js?v=23';
 import { tokens, settings, gapCache, playlistId, history, artistLibrary, playlistLog, clearAll }
-    from './storage.js?v=22';
-import * as api from './api.js?v=22';
-import { buildPlaylist, maxSustainableCooldown, tierOf } from './engine.js?v=22';
+    from './storage.js?v=23';
+import * as api from './api.js?v=23';
+import { buildPlaylist, maxSustainableCooldown, tierOf } from './engine.js?v=23';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
