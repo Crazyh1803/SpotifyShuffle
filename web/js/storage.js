@@ -162,8 +162,8 @@ export const playlistId = {
 // ── History / Cooldown ────────────────────────────────────────────────────────
 // Structure: { playlists: [ { trackIds: string[], artistIds: string[] } ] }, newest first.
 
-/** Playlist snapshots retained. Must be ≥ the largest cooldown setting (song cooldown, 50). */
-const MAX_STORED = 50;
+/** Playlist snapshots retained. Must be ≥ the largest cooldown setting (song cooldown, 100). */
+const MAX_STORED = 100;
 
 export const history = {
     get: () => load(KEYS.history, { playlists: [] }),
@@ -177,7 +177,7 @@ export const history = {
             artistIds: [...new Set(tracks.flatMap(t => t.artists.map(a => a.id)))],
         };
         h.playlists.unshift(entry);
-        // Must cover the largest song-cooldown setting (50); each entry is only ID lists.
+        // Must cover the largest song-cooldown setting (100); each entry is only ID lists.
         if (h.playlists.length > MAX_STORED) h.playlists = h.playlists.slice(0, MAX_STORED);
         history.save(h);
     },
