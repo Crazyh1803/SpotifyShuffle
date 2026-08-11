@@ -124,7 +124,50 @@ as a warning even when the user was well inside budget:
 - in budget → `Your {pool} tracks support up to {rec} builds with no song repeating — you're at {chosen}.`
 - over budget → `Your {pool} tracks cover about {rec} builds. A song never repeats inside your window, so at {chosen} the last builds start coming up short.`
 
-## 5. Custom playlist name
+## 5. Duplicate tracks within a build
+
+**Priority: high.** Android has both causes, identically to the web app before `68afe46`.
+
+**Cause A — non-exclusive tiers.** `TrueShuffleEngine.kt:278-280`:
+
+```kotlin
+val tierA = artists.filter { it.id in topArtistIds }.shuffled()
+val tierC = artists.filter { it.id in discoveryArtistIds }.shuffled()   // overlaps tierA
+val tierB = artists.filter { it.id !in topArtistIds && it.id !in discoveryArtistIds }.shuffled()
+```
+
+`tierB` excludes both, but an artist in *both* top and discovery lands in `tierA` **and** `tierC`,
+appears twice in the ordered list, and gets two slots. This is not rare — a top artist credited
+only as a feature has no primary coverage from Sources 1-3 and so is classified as a gap artist
+too. Five such artists showed up in one real library.
+
+Fix: resolve the overlap the way `tierOf` already does (C > A > B) —
+
+```kotlin
+val tierC = artists.filter { it.id in discoveryArtistIds }.shuffled()
+val tierA = artists.filter { it.id in topArtistIds && it.id !in discoveryArtistIds }.shuffled()
+```
+
+**Cause B — no dedup in pass 1.** `usedTrackIds` is only created at `:195` for pass 2, so the
+`playlist.add(track)` at `:187` has no guard. A track is filed under every credited artist, so a
+collaboration sits in two artists' pools and both slots can pick it. Hoist `usedTrackIds` above
+pass 1, filter each artist's list through it, and add on selection.
+
+## 6. Remove the dead popularity bias
+
+Spotify no longer returns `popularity` on `/me/tracks` or `/me/top/tracks` — the field is
+**absent**, not zero. Verified live against both endpoints, and corroborated by 496 logged tracks
+all recording 0.
+
+Android has the same `NEUTRAL_POPULARITY` / `effectivePop` machinery web did, so it is equally
+inert: every track scores the same, the equal-popularity branch always wins, and selection is
+already uniform random. Deleting it is behaviour-neutral — it only stops the code implying a
+preference it cannot express.
+
+Do this **with** item 1, since both edit `selectTrack`. Keep capturing `popularity` in the
+playlist log as an early warning if the field ever returns.
+
+## 7. Custom playlist name
 
 Web commit `90fcf3c`. Android `AppSettings` has no playlist-name key — every build overwrites a
 fixed-name playlist. Needs: a setting, a text field in `SettingsSheet`, use at create time, and
@@ -154,8 +197,14 @@ falling behind.
 
 ## Suggested order
 
-1. Items 1 + 2 together (hard cooldown + short-build reporting) — one behavioural change, needs a
-   device build and a couple of real playlists to confirm.
+1. Items 1 + 2 + 5 + 6 together — they all edit `selectTrack` / `buildPlaylist`, so doing them in
+   one pass avoids touching the same code four times. Needs a device build and a couple of real
+   playlists to confirm.
 2. Item 3 (ceiling), after checking the SharedPreferences size question.
 3. Item 4 (recommendation), which depends on 3 for its clamp.
-4. Item 5 (playlist name) — independent, can go any time.
+4. Item 7 (playlist name) — independent, can go any time.
+
+Port the regression harness too. The web fix was verified by a simulation that reproduces both
+duplicate causes: it fails on the pre-fix engine (2/60 builds at a real library's shape, 27/60
+under heavy overlap) and passes after. The equivalent as a JVM unit test would catch a
+reintroduction cheaply.
