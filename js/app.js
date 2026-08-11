@@ -1,12 +1,12 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=25';
+import { startAuth, getRedirectUri } from './auth.js?v=26';
 import { tokens, settings, gapCache, playlistId, history, artistLibrary, playlistLog,
-         clearAll, storageReport, GAP_TRACKS_PER_ARTIST } from './storage.js?v=25';
-import * as api from './api.js?v=25';
+         clearAll, storageReport, GAP_TRACKS_PER_ARTIST } from './storage.js?v=26';
+import * as api from './api.js?v=26';
 import { buildPlaylist, maxSustainableCooldown, maxSustainableSongCooldown, tierOf }
-    from './engine.js?v=25';
+    from './engine.js?v=26';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -40,6 +40,10 @@ function setProgressText(txt) {
 // Store only the fields the engine and the playlist-log export need — keeps the cache small.
 // Album name/date are carried purely for the export; entries cached before they were added
 // simply export as blank until the next rescan.
+//
+// `popularity` no longer influences selection — Spotify stopped returning the field, so it is
+// always 0 now. It is still captured because it costs nothing and is our early warning if the
+// field ever comes back; see selectTrack() in engine.js for why the bias was removed.
 function minifyTrack(t) {
     return {
         id:          t.id,

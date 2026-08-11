@@ -24,13 +24,6 @@ const AVG_TRACK_MS = 240 * 1000;
 /** Keep at least neededArtists × this many fresh artists before applying cooldown. */
 const FRESH_HEADROOM = 2;
 
-/**
- * Effective popularity assigned to unknown (0) tracks so they sort as *average* rather than as
- * the deepest cut. Album- and gap-sourced tracks have no popularity field and default to 0;
- * without this they always win the least-popular bias over tracks with real, genuinely-low
- * popularity, and the deep-cut preference degenerates into "always pick the most obscure cut".
- */
-const NEUTRAL_POPULARITY = 35;
 
 const NOISE_WORDS = [
     'skit', 'interlude', 'intro', 'outro', 'reprise',
@@ -126,9 +119,14 @@ function interleave3(tierC, tierB, tierA, w) {
 }
 
 function buildOrderedArtists(artists, topIds, discoveryIds, bias) {
+    // The three tiers MUST be mutually exclusive: an artist appearing in two of them lands twice
+    // in the ordered list and gets two slots in pass 1. Top-artist and discovery membership do
+    // overlap in practice — a top artist credited only as a feature has no primary coverage from
+    // Sources 1-3, so they are classified as a gap artist as well. Resolve the overlap the same
+    // way tierOf() does (C > A > B) so ordering and tier counting agree.
     const s = shuffle(artists);
-    const tierA = s.filter(a => topIds.has(a.id));
     const tierC = s.filter(a => discoveryIds.has(a.id));
+    const tierA = s.filter(a => topIds.has(a.id) && !discoveryIds.has(a.id));
     const tierB = s.filter(a => !topIds.has(a.id) && !discoveryIds.has(a.id));
 
     if (tierC.length === 0 || bias <= 15) return interleave2(tierB, tierA);
@@ -171,7 +169,13 @@ function adaptiveArtistCooldown(recentArtistSets, poolArtistIds, neededArtists) 
  * album deep cuts surface, but falls back to liked ones rather than dropping the artist. Tier A
  * skips that filter entirely — top artists are expected favourites.
  *
- * Whatever pool survives then gets an x² bias over ascending effective popularity.
+ * Selection within whatever pool survives is UNIFORM RANDOM. There used to be an x² bias over
+ * ascending popularity here, to favour deep cuts. Spotify no longer returns the `popularity`
+ * field on /me/tracks or /me/top/tracks — verified live against both endpoints, and corroborated
+ * by 16 builds of playlist logs in which all 496 tracks recorded popularity 0 — so every track
+ * scored identically and the bias had already degenerated to uniform random on every call.
+ * Removing it changed no behaviour; it only stopped the code implying a preference it could not
+ * express. The non-liked filter above is now what surfaces deep cuts.
  */
 function selectTrack(tracks, isRareArtist, likedIds, cooldownIds) {
     // Hard gate first — nothing below may reintroduce a cooled-down track.
@@ -182,22 +186,7 @@ function selectTrack(tracks, isRareArtist, likedIds, cooldownIds) {
     if (pool.length === 0) pool = fresh;
 
     if (pool.length === 1) return pool[0];
-
-    const effectivePop = (t) => {
-        const p = t.popularity ?? 0;
-        return p <= 0 ? NEUTRAL_POPULARITY : p;
-    };
-    const sorted = [...pool].sort((a, b) => effectivePop(a) - effectivePop(b));
-
-    // When every track shares the same effective popularity (common when a whole pool is
-    // album-sourced unknowns) the x² index would cluster at the first entry — use uniform random.
-    if (effectivePop(sorted[0]) === effectivePop(sorted[sorted.length - 1])) {
-        return pool[Math.floor(Math.random() * pool.length)];
-    }
-
-    // x² biases toward index 0 (least popular = deepest cut).
-    const r = Math.random();
-    return sorted[Math.min(sorted.length - 1, Math.floor(r * r * sorted.length))];
+    return pool[Math.floor(Math.random() * pool.length)];
 }
 
 /**
@@ -258,25 +247,33 @@ export function buildPlaylist({
     ];
 
     const playlist = [];
+    const usedIds = new Set();
     let totalMs = 0;
 
-    // Pass 1: one track per artist
+    // Pass 1: one track per artist.
+    //
+    // A track is filed under EVERY artist credited on it, so a collaboration sits in two or more
+    // artists' pools and can be selected twice by different slots. Exclude what is already in the
+    // playlist so a build can never contain the same track twice.
     for (const artist of orderedArtists) {
         if (totalMs >= targetDurationMs) break;
         const tracks = filtered[artist.id];
         if (!tracks) continue;
 
-        const track = selectTrack(tracks, !topIds.has(artist.id), likedIds, cooldownTrackIds);
+        const available = tracks.filter(t => !usedIds.has(t.id));
+        if (available.length === 0) continue;
+
+        const track = selectTrack(available, !topIds.has(artist.id), likedIds, cooldownTrackIds);
         if (!track) continue;   // every track this artist has is inside the cooldown window
         playlist.push(track);
+        usedIds.add(track.id);
         totalMs += track.duration_ms ?? 0;
     }
 
-    // Pass 2: still short — allow repeat artists, but keep honouring cooldown/liked/popularity
-    // via selectTrack rather than a blind random pick, so we don't re-surface recently played
-    // tracks just to fill time.
+    // Pass 2: still short — allow repeat artists, but keep honouring the cooldown and liked
+    // preference via selectTrack rather than a blind random pick, so we don't re-surface
+    // recently played tracks just to fill time.
     if (totalMs < targetDurationMs) {
-        const usedIds = new Set(playlist.map(t => t.id));
         for (const artist of shuffle(orderedArtists)) {
             if (totalMs >= targetDurationMs) break;
             const available = (filtered[artist.id] || []).filter(t => !usedIds.has(t.id));
