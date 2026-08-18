@@ -2,8 +2,19 @@ package com.spotifytrueshuffle.shuffle
 
 import com.spotifytrueshuffle.api.Artist
 import com.spotifytrueshuffle.api.Track
-import kotlin.math.pow
-import kotlin.random.Random
+
+/**
+ * The outcome of a build.
+ *
+ * [shortOfTarget] matters because the song cooldown is a hard constraint: when every remaining
+ * track is inside the user's no-repeat window the build legitimately comes up short rather than
+ * repeating a song. Callers surface that instead of quietly handing back a short playlist.
+ */
+data class ShuffleResult(
+    val tracks: List<Track>,
+    val shortOfTarget: Boolean,
+    val durationMs: Long,
+)
 
 /**
  * True Shuffle Algorithm
@@ -54,14 +65,6 @@ class TrueShuffleEngine {
         private const val FRESH_HEADROOM = 2
 
         /**
-         * Effective popularity assigned to unknown (0) tracks so they sort as *average*
-         * rather than as the deepest cut. Album- and gap-sourced simplified tracks have no
-         * popularity field and default to 0; without this they always win the least-popular
-         * bias over tracks with real, genuinely-low popularity.
-         */
-        private const val NEUTRAL_POPULARITY = 35
-
-        /**
          * Estimates the largest artist-cooldown value (in playlists) the given pool can fully
          * sustain before [adaptiveArtistCooldown]'s starvation floor starts relaxing it early.
          * Mirrors the same math the engine actually uses, so it's precise, not a guess.
@@ -74,6 +77,21 @@ class TrueShuffleEngine {
             val neededArtists = (targetDurationMs / AVG_TRACK_MS).toInt().coerceAtLeast(1)
             val floor = neededArtists * FRESH_HEADROOM
             return ((poolArtistCount - floor) / neededArtists).coerceAtLeast(0)
+        }
+
+        /**
+         * How many consecutive playlists the pool can fill with NO song repeating, given the
+         * target duration. The song cooldown is a hard rule, so this is simply how many builds'
+         * worth of distinct tracks exist: past it, builds start coming up short rather than
+         * repeating.
+         *
+         * An upper bound — artist cooldown and tier interleaving mean not every track is
+         * reachable in every build — but it is the honest ceiling, and unlike a per-artist
+         * average it is expressed in the same unit as the setting itself.
+         */
+        fun maxSustainableSongCooldown(totalTrackCount: Int, targetDurationMs: Long): Int {
+            val tracksPerBuild = (targetDurationMs / AVG_TRACK_MS).toInt().coerceAtLeast(1)
+            return (totalTrackCount / tracksPerBuild).coerceAtLeast(0)
         }
 
         /**
@@ -130,7 +148,7 @@ class TrueShuffleEngine {
         cooldownTrackIds: Set<String> = emptySet(),
         discoveryBias: Int = 60,
         targetDurationMs: Long = 2L * 60 * 60 * 1000
-    ): List<Track> {
+    ): ShuffleResult {
         // Filter out non-music tracks (skits, interludes, etc.) AND duration outliers — very
         // short fragments (interstitials, joke tracks) and absurdly long ones (silence tracks,
         // sprawling live jams that would dominate the playlist). Falls back progressively so an
@@ -148,7 +166,9 @@ class TrueShuffleEngine {
         val artistsWithTracks = followedArtists.filter {
             filteredTracksByArtist[it.id]?.isNotEmpty() == true
         }
-        if (artistsWithTracks.isEmpty()) return emptyList()
+        if (artistsWithTracks.isEmpty()) {
+            return ShuffleResult(emptyList(), shortOfTarget = true, durationMs = 0L)
+        }
 
         // Adaptive artist cooldown: suppress artists from the most-recent playlists first
         // (all tiers), but stop before the fresh pool would starve. Self-relaxing, so a small
@@ -171,20 +191,29 @@ class TrueShuffleEngine {
             freshArtists, topArtistIds, discoveryArtistIds, discoveryBias
         ) + cooldownFallbackArtists.shuffled()
 
-        // Pick one track per artist, stopping when we reach the target duration
+        // Pick one track per artist, stopping when we reach the target duration.
+        //
+        // A track is filed under EVERY artist credited on it, so a collaboration sits in two or
+        // more artists' pools and can be selected twice by different slots. usedTrackIds is
+        // hoisted above pass 1 (it used to be created for pass 2 only) so a build can never
+        // contain the same track twice.
         val playlist = mutableListOf<Track>()
+        val usedTrackIds = mutableSetOf<String>()
         var totalMs = 0L
 
         for (artist in orderedArtists) {
             if (totalMs >= targetDurationMs) break
             val tracks = filteredTracksByArtist[artist.id] ?: continue
+            val available = tracks.filter { it.id !in usedTrackIds }
+            if (available.isEmpty()) continue
             val track = selectTrack(
-                tracks,
+                available,
                 isRareArtist = artist.id !in topArtistIds,
                 likedTrackIds = likedTrackIds,
                 cooldownTrackIds = cooldownTrackIds
-            )
+            ) ?: continue   // every track this artist has is inside the cooldown window
             playlist.add(track)
+            usedTrackIds.add(track.id)
             totalMs += track.durationMs
         }
 
@@ -192,7 +221,6 @@ class TrueShuffleEngine {
         // cooldown/liked/popularity preferences via selectTrack instead of a blind random
         // pick — so we don't re-surface recently-played tracks just to fill time.
         if (totalMs < targetDurationMs) {
-            val usedTrackIds = playlist.map { it.id }.toMutableSet()
             for (artist in orderedArtists.shuffled()) {
                 if (totalMs >= targetDurationMs) break
                 val remaining = filteredTracksByArtist[artist.id]?.filter { it.id !in usedTrackIds }
@@ -202,14 +230,20 @@ class TrueShuffleEngine {
                     isRareArtist = artist.id !in topArtistIds,
                     likedTrackIds = likedTrackIds,
                     cooldownTrackIds = cooldownTrackIds
-                )
+                ) ?: continue
                 playlist.add(track)
                 usedTrackIds.add(track.id)
                 totalMs += track.durationMs
             }
         }
 
-        return playlist
+        // A hard song cooldown can legitimately leave the build short: every remaining track is
+        // inside the user's no-repeat window. Report it rather than quietly returning a short list.
+        return ShuffleResult(
+            tracks = playlist,
+            shortOfTarget = totalMs < targetDurationMs,
+            durationMs = totalMs
+        )
     }
 
     /**
@@ -275,8 +309,14 @@ class TrueShuffleEngine {
         discoveryArtistIds: Set<String>,
         discoveryBias: Int = 60
     ): List<Artist> {
-        val tierA = artists.filter { it.id in topArtistIds }.shuffled()
+        // The three tiers MUST be mutually exclusive: an artist appearing in two of them lands
+        // twice in the ordered list and gets two slots in pass 1. Top-artist and discovery
+        // membership do overlap in practice — a top artist credited only as a feature has no
+        // primary coverage from Sources 1-3, so they are classified as a gap artist as well.
+        // Resolve the overlap the same way tierOf() does (C > A > B) so ordering and tier
+        // counting agree.
         val tierC = artists.filter { it.id in discoveryArtistIds }.shuffled()
+        val tierA = artists.filter { it.id in topArtistIds && it.id !in discoveryArtistIds }.shuffled()
         val tierB = artists.filter { it.id !in topArtistIds && it.id !in discoveryArtistIds }.shuffled()
 
         return if (tierC.isNotEmpty()) {
@@ -347,52 +387,44 @@ class TrueShuffleEngine {
      *       expected favourites; filtering out liked tracks would leave very little), but
      *       still respects cooldown and applies the same depth-cut bias.
      *
-     * Both tiers then apply an x² distribution over tracks sorted by ascending popularity
-     * so lower-popularity (deep-cut) songs are more likely than chart hits.
+     * The song cooldown is a HARD constraint: a track inside the cooldown window is never
+     * returned, even if that means this artist contributes nothing to the build. "Cooldown 40"
+     * means a song cannot reappear within 40 playlists, full stop — so the caller skips the
+     * artist rather than reaching for a track the user has explicitly excluded.
      *
-     * Edge case: album-sourced tracks all have popularity = 0 (the simplified-track API
-     * response has no popularity field). When all tracks share the same popularity score
-     * the sort order is arbitrary and the x² bias would cluster at the first few entries.
-     * In that case we fall back to uniform random so every track is equally likely.
+     * This used to end each branch with `.ifEmpty { tracks }`, which silently served a
+     * cooled-down track whenever an artist had nothing fresh. Real logs showed the cost: 16
+     * repeats inside a 40-playlist window, 15 of them from artists with a single cached track.
+     *
+     * Selection within the surviving pool is UNIFORM RANDOM. There used to be an x² bias over
+     * ascending popularity to favour deep cuts, but Spotify no longer returns the `popularity`
+     * field on /me/tracks or /me/top/tracks — it is absent, not zero — so every track scored
+     * NEUTRAL_POPULARITY, the equal-popularity branch always won, and the bias had already
+     * degenerated to uniform random on every call. Removing it changed no behaviour; it only
+     * stopped the code implying a preference it could not express. The non-liked filter below
+     * is now what surfaces deep cuts.
+     *
+     * @return the chosen track, or null if every track this artist has is inside the cooldown
+     *         window — the caller skips the artist.
      */
     private fun selectTrack(
         tracks: List<Track>,
         isRareArtist: Boolean,
         likedTrackIds: Set<String> = emptySet(),
         cooldownTrackIds: Set<String> = emptySet()
-    ): Track {
-        // Build candidate pool based on tier.
-        val pool = if (isRareArtist) {
-            // Tier B / C: prefer non-liked tracks to surface album deep cuts
-            tracks
-                .filter { it.id !in cooldownTrackIds && it.id !in likedTrackIds }
-                .ifEmpty { tracks.filter { it.id !in cooldownTrackIds } }
-                .ifEmpty { tracks }
-        } else {
-            // Tier A: include liked tracks (all top-artist songs are fair game),
-            // still exclude recent cooldown tracks
-            tracks.filter { it.id !in cooldownTrackIds }
-                .ifEmpty { tracks }
-        }
+    ): Track? {
+        // Hard gate first — nothing below may reintroduce a cooled-down track.
+        val fresh = tracks.filter { it.id !in cooldownTrackIds }
+        if (fresh.isEmpty()) return null
+
+        // Tier B / C prefer non-liked tracks so album deep cuts surface, but fall back to liked
+        // ones rather than dropping the artist. Tier A skips the filter — top artists are
+        // expected favourites. This preference stays SOFT; only the cooldown is hard.
+        val pool = if (isRareArtist) fresh.filter { it.id !in likedTrackIds }.ifEmpty { fresh }
+                   else fresh
 
         if (pool.size == 1) return pool[0]
-
-        // Treat unknown popularity (0 — album/gap-sourced simplified tracks have no score) as
-        // a neutral mid value so those tracks sort as *average* rather than always winning the
-        // least-popular deep-cut bias over tracks with real, genuinely-low popularity.
-        fun effectivePop(t: Track) = if (t.popularity <= 0) NEUTRAL_POPULARITY else t.popularity
-        val sorted = pool.sortedBy { effectivePop(it) }
-
-        // If every track has the same effective popularity (common when a whole pool is
-        // album-sourced unknowns), the x² index would skew toward the first entry. Use uniform
-        // random instead so every track is equally likely.
-        if (effectivePop(sorted.first()) == effectivePop(sorted.last())) {
-            return pool.random()
-        }
-
-        // x² biases toward index 0 (least popular = deepest cut).
-        val rawIdx = (Random.nextDouble().pow(2.0) * sorted.size).toInt()
-        return sorted[rawIdx.coerceIn(0, sorted.size - 1)]
+        return pool.random()
     }
 
     /**

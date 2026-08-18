@@ -180,6 +180,11 @@ data class CreatePlaylistRequest(
     @SerializedName("public") val isPublic: Boolean = false
 )
 
+/** Body for PUT /playlists/{id} — renaming the generated playlist in place. */
+data class PlaylistDetailsBody(
+    val name: String
+)
+
 data class TracksBody(
     val uris: List<String>
 )

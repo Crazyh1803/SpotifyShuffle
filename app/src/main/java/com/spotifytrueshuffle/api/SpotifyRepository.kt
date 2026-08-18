@@ -191,6 +191,12 @@ class SpotifyRepository(
         batchSize: Int = BATCH_SIZE,
         rescanThresholdMs: Long = Long.MAX_VALUE,
         cachedLibraryPool: LibraryTrackPool? = null,
+        /**
+         * Only consulted when the user follows no artists (liked-songs-only mode).
+         * false = Strict: shuffle only the exact songs they have liked.
+         * true  = Explore: also include top tracks and saved-album cuts by those artists.
+         */
+        likedSongsExploreMode: Boolean = false,
         /** Called each time a new artist scan starts — artist name, artists scanned so far, total to scan. */
         onScanProgress: ((artistName: String, scanned: Int, total: Int) -> Unit)? = null
     ): TrackPoolBuildResult {
@@ -543,9 +549,21 @@ class SpotifyRepository(
             )
         }
 
-        // No followed artists — return pool built from sources 1-3 only
-        val result = trackMap.mapValues { (_, tracks) -> tracks.distinctBy { it.id } }
-        Log.d(TAG, "Track pool (no followed artists): ${result.values.sumOf { it.size }} tracks")
+        // No followed artists — liked-songs-only mode.
+        //
+        // Explore widens the pool to everything sources 1-3 gathered (top tracks and saved-album
+        // cuts by the same artists). Strict, the default, keeps only the exact songs the user has
+        // liked — a deliberate choice, since someone with no follows has told us nothing about
+        // which artists they want explored.
+        val result = trackMap
+            .mapValues { (_, tracks) ->
+                val distinct = tracks.distinctBy { it.id }
+                if (likedSongsExploreMode) distinct else distinct.filter { it.id in likedTrackIds }
+            }
+            .filterValues { it.isNotEmpty() }
+        Log.d(TAG, "Track pool (no followed artists, " +
+            "${if (likedSongsExploreMode) "explore" else "strict"}): " +
+            "${result.values.sumOf { it.size }} tracks")
         return TrackPoolBuildResult(
             pool = TrackPool(
                 tracksByArtist = result,
@@ -562,10 +580,14 @@ class SpotifyRepository(
 
     // ── Playlist ──────────────────────────────────────────────────────────────
 
-    suspend fun createPlaylist(userId: String, description: String): Playlist {
+    suspend fun createPlaylist(
+        userId: String,
+        description: String,
+        name: String = com.spotifytrueshuffle.SpotifyConfig.PLAYLIST_NAME
+    ): Playlist {
         ensureValidToken()
         val request = CreatePlaylistRequest(
-            name = com.spotifytrueshuffle.SpotifyConfig.PLAYLIST_NAME,
+            name = name,
             description = description,
             isPublic = false  // private — uses playlist-modify-private; avoids 403s on public playlists in dev mode
         )
@@ -584,6 +606,22 @@ class SpotifyRepository(
             } else {
                 throw e
             }
+        }
+    }
+
+    /**
+     * Renames an existing playlist. Returns true on success; failure is non-fatal — the build
+     * still succeeds, the playlist just keeps its old title until the next attempt.
+     */
+    suspend fun renamePlaylist(playlistId: String, name: String): Boolean {
+        ensureValidToken()
+        return try {
+            val res = api.changePlaylistDetails(playlistId, PlaylistDetailsBody(name))
+            if (!res.isSuccessful) Log.w(TAG, "renamePlaylist ${res.code()} — keeping old title")
+            res.isSuccessful
+        } catch (e: Exception) {
+            Log.w(TAG, "renamePlaylist failed: ${e.message}")
+            false
         }
     }
 

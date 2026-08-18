@@ -163,4 +163,14 @@ interface SpotifyApiService {
         @Path("playlistId") playlistId: String,
         @Body body: TracksBody
     ): Response<SnapshotResponse>
+
+    /**
+     * Changes a playlist's details. Used to rename the existing playlist in place when the user
+     * edits the name in Settings, so they don't end up with a stale title or a second playlist.
+     */
+    @PUT("playlists/{playlistId}")
+    suspend fun changePlaylistDetails(
+        @Path("playlistId") playlistId: String,
+        @Body body: PlaylistDetailsBody
+    ): Response<Unit>
 }

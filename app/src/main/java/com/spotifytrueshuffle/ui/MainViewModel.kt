@@ -14,6 +14,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.spotifytrueshuffle.BuildConfig
 import com.spotifytrueshuffle.background.PlaylistRebuildWorker
 import com.spotifytrueshuffle.api.Artist
 import com.spotifytrueshuffle.api.SpotifyRepository
@@ -27,6 +28,8 @@ import com.spotifytrueshuffle.cache.GapArtistCache
 import com.spotifytrueshuffle.cache.LibraryTrackCache
 import com.spotifytrueshuffle.cache.PlaylistLogStorage
 import com.spotifytrueshuffle.cache.buildPlaylistLogEntry
+import com.spotifytrueshuffle.cache.MAX_STORED
+import com.spotifytrueshuffle.cache.resolvedPlaylistName
 import com.spotifytrueshuffle.cache.ShuffleHistoryStorage
 import com.spotifytrueshuffle.shuffle.TrueShuffleEngine
 import kotlinx.coroutines.Dispatchers
@@ -92,7 +95,13 @@ class MainViewModel(
             /** Number of tracks from Tier A (top artists). */
             val tierACount: Int = 0,
             /** True if Spotify throttled gap-fill this build, so discovery scanning is incomplete. */
-            val rateLimited: Boolean = false
+            val rateLimited: Boolean = false,
+            /**
+             * True when the hard song cooldown left too few eligible tracks to reach the target
+             * duration. Not an error — the user asked for no repeats, and honouring that is worth
+             * a shorter playlist — but it must be visible rather than silent.
+             */
+            val shortOfTarget: Boolean = false
         ) : UiState()
         data class Error(val message: String) : UiState()
     }
@@ -131,6 +140,10 @@ class MainViewModel(
     private val _maxSustainableSongCooldown = MutableStateFlow(computeMaxSustainableSongCooldown())
     val maxSustainableSongCooldown: StateFlow<Int?> = _maxSustainableSongCooldown.asStateFlow()
 
+    /** Distinct tracks across all caches — shown in the song-cooldown recommendation. */
+    private val _trackPoolSize = MutableStateFlow(computeTrackPoolSize())
+    val trackPoolSize: StateFlow<Int> = _trackPoolSize.asStateFlow()
+
     /**
      * Followed artists that could actually contribute a track to a build. Shown alongside the
      * recommendation so the number has a visible reason ("your 291 artists support 7").
@@ -145,6 +158,14 @@ class MainViewModel(
     /** Target playlist duration in milliseconds. */
     private val _playlistDurationMs = MutableStateFlow(appSettings.load().playlistDurationMs)
     val playlistDurationMs: StateFlow<Long> = _playlistDurationMs.asStateFlow()
+
+    /** User-chosen playlist name; blank means the default is used at save time. */
+    private val _playlistName = MutableStateFlow(appSettings.load().playlistName)
+    val playlistName: StateFlow<String> = _playlistName.asStateFlow()
+
+    /** Explore mode for the liked-songs-only fallback (users with zero followed artists). */
+    private val _likedSongsExploreMode = MutableStateFlow(appSettings.load().likedSongsExploreMode)
+    val likedSongsExploreMode: StateFlow<Boolean> = _likedSongsExploreMode.asStateFlow()
 
     /** Whether the Settings bottom sheet is currently visible. */
     private val _settingsVisible = MutableStateFlow(false)
@@ -216,9 +237,9 @@ class MainViewModel(
         _uiState.value = UiState.Setup
     }
 
-    /** Updates the song/track cooldown setting (1–50) and persists it immediately. */
+    /** Updates the song/track cooldown setting (1–100) and persists it immediately. */
     fun setSongCooldownCount(n: Int) {
-        val clamped = n.coerceIn(1, 50)
+        val clamped = n.coerceIn(1, 100)
         _songCooldownCount.value = clamped
         historyStorage.saveCooldownCount(clamped)
     }
@@ -228,6 +249,24 @@ class MainViewModel(
         val clamped = n.coerceIn(1, 30)
         _artistCooldownCount.value = clamped
         historyStorage.saveArtistCooldownCount(clamped)
+    }
+
+    /** Updates the playlist name. Blank falls back to the default at save time. */
+    fun setPlaylistName(name: String) {
+        _playlistName.value = name
+        val cur = appSettings.load()
+        appSettings.save(cur.copy(playlistName = name))
+    }
+
+    /**
+     * Toggles explore mode for the liked-songs-only fallback. Only has any effect when the user
+     * follows no artists — off means shuffle strictly their liked songs, on widens to top tracks
+     * and saved-album cuts by those same artists.
+     */
+    fun setLikedSongsExploreMode(enabled: Boolean) {
+        _likedSongsExploreMode.value = enabled
+        val cur = appSettings.load()
+        appSettings.save(cur.copy(likedSongsExploreMode = enabled))
     }
 
     /** Updates the discovery bias (0–100) and persists it. */
@@ -258,6 +297,7 @@ class MainViewModel(
         _artistPoolSize.value = computeArtistPoolSize()
         _maxSustainableArtistCooldown.value = computeMaxSustainableArtistCooldown()
         _maxSustainableSongCooldown.value = computeMaxSustainableSongCooldown()
+        _trackPoolSize.value = computeTrackPoolSize()
     }
 
     /** Applies the recommended artist cooldown for the current library and duration. No-op if unknown. */
@@ -296,15 +336,32 @@ class MainViewModel(
     }
 
     /**
-     * Best-effort: average cached tracks-per-artist across the gap-artist cache, clamped to the
-     * song slider's range. Once song cooldown exceeds this, many artists' entire cached pool is
-     * likely on cooldown at once, so it stops meaningfully changing which track gets picked.
-     * Null when there's no gap-scan data yet to estimate from.
+     * Distinct tracks across the whole pool — library cache (sources 1-3) plus the gap-artist
+     * cache. This is what bounds the song cooldown: it is a hard no-repeat rule, so the ceiling
+     * is simply how many builds' worth of distinct tracks exist.
+     */
+    private fun computeTrackPoolSize(): Int {
+        val ids = mutableSetOf<String>()
+        libraryTrackCache.load()?.tracksByArtist?.values?.forEach { list ->
+            list.forEach { ids.add(it.id) }
+        }
+        gapArtistCache.load().values.forEach { entry -> entry.tracks.forEach { ids.add(it.id) } }
+        return ids.size
+    }
+
+    /**
+     * Mirrors [TrueShuffleEngine.maxSustainableSongCooldown] using the real distinct-track pool
+     * and the current target duration, clamped to the song slider's range.
+     *
+     * This previously used the *average tracks per artist* across the gap cache, which is the
+     * wrong unit entirely — it answered "how deep is a typical artist's catalogue" when the
+     * question is "how many builds of distinct songs do I have". Null with no pool data yet.
      */
     private fun computeMaxSustainableSongCooldown(): Int? {
-        val trackCounts = gapArtistCache.load().values.map { it.tracks.size }.filter { it > 0 }
-        if (trackCounts.isEmpty()) return null
-        return trackCounts.average().toInt().coerceIn(1, 50)
+        val poolSize = computeTrackPoolSize()
+        if (poolSize == 0) return null
+        val durationMs = appSettings.load().playlistDurationMs
+        return TrueShuffleEngine.maxSustainableSongCooldown(poolSize, durationMs).coerceIn(1, 100)
     }
 
     /** Updates the auto-rescan interval (0 = manual only, 1–365 = days) and persists it. */
@@ -447,8 +504,24 @@ class MainViewModel(
             add("Artist cooldown        : ${cooldownSettings.artistCooldownPlaylists} playlists")
             add("Auto-rebuild           : ${if (settings.autoRebuildDays == 0) "Off" else "Every ${settings.autoRebuildDays} days"}")
             add("Track rescan interval  : ${if (settings.trackRescanIntervalDays == 0) "Manual" else "Every ${settings.trackRescanIntervalDays} days"}")
+            add("Playlist name          : ${settings.resolvedPlaylistName()}")
+            add("Liked-songs explore    : ${if (settings.likedSongsExploreMode) "On" else "Off"}")
+            add("")
+            add("--- Cooldown History ---")
+            // Depth is what actually bounds the song cooldown: a setting of 40 against a history
+            // of 8 silently behaves like 8. Without this line that mismatch is invisible.
+            add("Stored playlists : ${cooldownSettings.recentPlaylists.size}  (cap $MAX_STORED)")
+            add("Track pool       : ${computeTrackPoolSize()}  (distinct tracks across all caches)")
+            add("Max song cooldown: ${computeMaxSustainableSongCooldown() ?: "n/a"}  (what the pool sustains)")
+            add("")
+            add("--- Rate Limiting ---")
+            val lastRateLimit = if (settings.lastRateLimitAtMs == 0L) "never"
+                                else java.time.Instant.ofEpochMilli(settings.lastRateLimitAtMs).toString()
+            add("429 responses    : ${settings.rateLimitHits}")
+            add("Last 429         : $lastRateLimit")
             add("")
             add("--- Device ---")
+            add("App version      : ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             add("Android SDK      : ${Build.VERSION.SDK_INT}")
             add("Device           : ${Build.MANUFACTURER} ${Build.MODEL}")
         }
@@ -686,6 +759,7 @@ class MainViewModel(
                     cachedEntries = cachedEntries,
                     rescanThresholdMs = rescanThresholdMs,
                     cachedLibraryPool = cachedLibraryPool,
+                    likedSongsExploreMode = _likedSongsExploreMode.value,
                     onScanProgress = { artistName, scanned, total ->
                         // Update the building message with the current artist name so the
                         // user can see it scanning — matches the behaviour from earlier versions.
@@ -749,7 +823,7 @@ class MainViewModel(
                 val currentDurationMs = _playlistDurationMs.value
                 Log.d(TAG, "Building with discoveryBias=$currentBias, durationMs=$currentDurationMs")
 
-                val tracks = shuffleEngine.buildPlaylist(
+                val shuffle = shuffleEngine.buildPlaylist(
                     followedArtists = library.followedArtists,
                     topArtistIds = topArtistIds,
                     tracksByArtist = tracksByArtist,
@@ -760,6 +834,7 @@ class MainViewModel(
                     discoveryBias = currentBias,
                     targetDurationMs = currentDurationMs
                 )
+                val tracks = shuffle.tracks
 
                 if (tracks.isEmpty()) {
                     _uiState.value = UiState.Error(
@@ -803,6 +878,17 @@ class MainViewModel(
 
                 Log.d(TAG, "Tier breakdown: C=$tierCCount, B=$tierBCount, A=$tierACount")
 
+                // Flush the process-lifetime 429 tally so a later diagnostics export still
+                // reports throttling even after a restart.
+                val (rlHits, rlLastAt) = com.spotifytrueshuffle.api.RateLimitInterceptor.snapshot()
+                if (rlHits > 0) {
+                    val cur = appSettings.load()
+                    appSettings.save(cur.copy(
+                        rateLimitHits = cur.rateLimitHits + rlHits,
+                        lastRateLimitAtMs = maxOf(cur.lastRateLimitAtMs, rlLastAt)
+                    ))
+                }
+
                 _uiState.value = UiState.Success(
                     playlistUrl = playlistUrl,
                     trackCount = tracks.size,
@@ -811,7 +897,8 @@ class MainViewModel(
                     tierCCount = tierCCount,
                     tierBCount = tierBCount,
                     tierACount = tierACount,
-                    rateLimited = buildResult.rateLimited
+                    rateLimited = buildResult.rateLimited,
+                    shortOfTarget = shuffle.shortOfTarget
                 )
 
             } catch (e: Exception) {
@@ -875,11 +962,19 @@ class MainViewModel(
         val description = "True shuffle of ${tracks.flatMap { it.artists }.map { it.id }.toSet().size}" +
             " artists — generated ${LocalDate.now()}"
 
+        val settings = appSettings.load()
+        val wantedName = settings.resolvedPlaylistName()
+
         // ── Try to update the existing playlist ──────────────────────────────
         val existingId = tokenStorage.playlistId
         if (existingId != null) {
             val updated = repository.replacePlaylistTracks(existingId, uris)
             if (updated) {
+                // Only call the rename endpoint when the name actually changed.
+                if (settings.appliedPlaylistName != wantedName &&
+                    repository.renamePlaylist(existingId, wantedName)) {
+                    appSettings.save(appSettings.load().copy(appliedPlaylistName = wantedName))
+                }
                 Log.d(TAG, "Playlist $existingId updated")
                 return "https://open.spotify.com/playlist/$existingId"
             }
@@ -889,7 +984,7 @@ class MainViewModel(
 
         // ── Create a fresh playlist ───────────────────────────────────────────
         val playlist = try {
-            repository.createPlaylist(userId, description)
+            repository.createPlaylist(userId, description, wantedName)
         } catch (e: retrofit2.HttpException) {
             val body = try { e.response()?.errorBody()?.string() ?: "(no body)" } catch (_: Exception) { "(unreadable)" }
             val scopes = tokenStorage.grantedScopes ?: "(not stored)"
@@ -902,7 +997,8 @@ class MainViewModel(
             )
         }
         tokenStorage.playlistId = playlist.id
-        Log.d(TAG, "New playlist created: ${playlist.id}")
+        appSettings.save(appSettings.load().copy(appliedPlaylistName = wantedName))
+        Log.d(TAG, "New playlist created: ${playlist.id} (\"$wantedName\")")
 
         // ── Populate it — try PUT first, fall back to POST ────────────────────
         try {

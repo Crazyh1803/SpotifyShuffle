@@ -396,6 +396,21 @@ private fun SuccessContent(
             }
         }
 
+        // ── Short-build notice ───────────────────────────────────────────────
+        // The song cooldown is a hard no-repeat guarantee, so a build can legitimately come up
+        // short: every remaining track is inside the user's window. Say so rather than quietly
+        // handing back a shorter playlist than they asked for.
+        if (state.shortOfTarget) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Came up short of your target — every remaining song is still inside " +
+                    "your no-repeat window. Lower the song cooldown, or build again later.",
+                color = SpotifyLightGray.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center
+            )
+        }
+
         // ── Rate-limit notice ────────────────────────────────────────────────
         if (state.rateLimited) {
             Spacer(modifier = Modifier.height(6.dp))

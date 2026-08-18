@@ -20,6 +20,12 @@ private const val SETTINGS_FILE = "app_settings.json"
  * @param trackRescanIntervalDays   How often gap-artist tracks are re-fetched automatically.
  *                                  0 = manual only; 1–365 = rescan every N days.
  *                                  Stale entries are re-scanned in batches on each build.
+ * @param playlistName              User-chosen name for the generated playlist. Blank uses
+ *                                  [DEFAULT_PLAYLIST_NAME].
+ * @param likedSongsExploreMode     Only relevant when the user has zero followed artists
+ *                                  (liked-songs-only mode). false (default) = Strict: shuffle
+ *                                  only the exact songs the user has liked. true = Explore:
+ *                                  also include top tracks and saved-album cuts by those artists.
  */
 data class AppSettings(
     val clientId: String = "",
@@ -28,11 +34,29 @@ data class AppSettings(
     val discoveryBias: Int = 60,
     val playlistDurationMs: Long = 2L * 60 * 60 * 1000,
     val trackRescanIntervalDays: Int = 30,
+    val playlistName: String = "",
+    /** The name Spotify currently holds, so unchanged builds skip the rename call. */
+    val appliedPlaylistName: String = "",
+    val likedSongsExploreMode: Boolean = false,
+    /**
+     * Rate-limit telemetry, persisted so a diagnostics export taken after a restart still shows
+     * whether Spotify has been throttling. Without this a stalled discovery scan is impossible
+     * to attribute from an export alone.
+     */
+    val rateLimitHits: Int = 0,
+    val lastRateLimitAtMs: Long = 0L,
     /** Last known scan progress — persisted so the status survives app restarts.
      *  -1 means no build has completed yet. */
     val lastScanScanned: Int = -1,
     val lastScanTotal: Int = -1
 )
+
+/** Used whenever the user hasn't set a playlist name of their own. */
+const val DEFAULT_PLAYLIST_NAME = com.spotifytrueshuffle.SpotifyConfig.PLAYLIST_NAME
+
+/** The name to actually send to Spotify — the user's, or the default when blank. */
+fun AppSettings.resolvedPlaylistName(): String =
+    playlistName.trim().ifEmpty { DEFAULT_PLAYLIST_NAME }
 
 /** Reads and writes [AppSettings] to/from internal app storage via Gson. */
 class AppSettingsStorage(context: Context) {

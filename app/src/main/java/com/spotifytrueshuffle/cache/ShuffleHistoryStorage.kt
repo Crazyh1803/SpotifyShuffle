@@ -13,7 +13,15 @@ private const val HISTORY_FILE = "shuffle_history.json"
  * Maximum number of past playlists to store on disk. Must cover the largest cooldown value
  * either song or artist cooldown can be set to (song cooldown maxes at 50).
  */
-private const val MAX_STORED = 50
+/**
+ * Playlist snapshots retained. Must be >= the largest song-cooldown setting (100), otherwise a
+ * cooldown of N silently behaves like MAX_STORED — the exact failure the Aug 2026 logs showed,
+ * where a 40-playlist setting was bounded by an 8-deep history.
+ *
+ * Public so diagnostics can report depth against the cap. Entries are ID lists only, so 100 of
+ * them is a small JSON blob, not a memory concern.
+ */
+const val MAX_STORED = 100
 
 /** Default used when a newly-added Int field is missing/zero after loading older JSON. */
 private const val DEFAULT_ARTIST_COOLDOWN = 5

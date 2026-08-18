@@ -18,6 +18,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.spotifytrueshuffle.cache.DEFAULT_PLAYLIST_NAME
 import com.spotifytrueshuffle.ui.theme.SpotifyGreen
 import com.spotifytrueshuffle.ui.theme.SpotifyLightGray
 
@@ -65,6 +69,9 @@ fun SettingsSheet(
     val playlistDurationMs     by viewModel.playlistDurationMs.collectAsState()
     val autoRebuildDays        by viewModel.autoRebuildDays.collectAsState()
     val rescanDays             by viewModel.trackRescanIntervalDays.collectAsState()
+    val trackPoolSize          by viewModel.trackPoolSize.collectAsState()
+    val savedPlaylistName      by viewModel.playlistName.collectAsState()
+    val exploreMode            by viewModel.likedSongsExploreMode.collectAsState()
     val context                = LocalContext.current
     val scope                  = rememberCoroutineScope()
 
@@ -93,6 +100,40 @@ fun SettingsSheet(
                 color = Color.White
             )
 
+            // ── Playlist name ────────────────────────────────────────────────
+            SettingSection(title = "Playlist name") {
+                // Local editing state so each keystroke doesn't hit disk; committed on change.
+                var nameField by remember(savedPlaylistName) { mutableStateOf(savedPlaylistName) }
+                OutlinedTextField(
+                    value = nameField,
+                    onValueChange = {
+                        nameField = it
+                        viewModel.setPlaylistName(it)
+                    },
+                    singleLine = true,
+                    placeholder = {
+                        Text(
+                            text = DEFAULT_PLAYLIST_NAME,
+                            color = SpotifyLightGray.copy(alpha = 0.4f),
+                            fontSize = 14.sp
+                        )
+                    },
+                    textStyle = LocalTextStyle.current.copy(color = Color.White, fontSize = 14.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SpotifyGreen,
+                        unfocusedBorderColor = SpotifyLightGray.copy(alpha = 0.3f),
+                        cursorColor = SpotifyGreen
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "Leave blank to use \"$DEFAULT_PLAYLIST_NAME\". Renaming updates your " +
+                        "existing playlist rather than creating a second one.",
+                    color = SpotifyLightGray.copy(alpha = 0.6f),
+                    fontSize = 11.sp
+                )
+            }
+
             // ── Song Repeat Cooldown ─────────────────────────────────────────
             SettingSection(title = "Song repeat cooldown") {
                 Text(
@@ -104,8 +145,8 @@ fun SettingsSheet(
                 Slider(
                     value = songCooldownCount.toFloat(),
                     onValueChange = { viewModel.setSongCooldownCount(it.toInt()) },
-                    valueRange = 1f..50f,
-                    steps = 48,  // integer steps between 1 and 50 (50 - 1 - 1 = 48)
+                    valueRange = 1f..100f,
+                    steps = 98,  // integer steps between 1 and 100 (100 - 1 - 1 = 98)
                     colors = SliderDefaults.colors(
                         thumbColor = SpotifyGreen,
                         activeTrackColor = SpotifyGreen,
@@ -119,15 +160,20 @@ fun SettingsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("1", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
-                    Text("50", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text("100", color = SpotifyLightGray.copy(alpha = 0.5f), fontSize = 11.sp)
                 }
                 maxSustainableSong?.let { rec ->
                     CooldownRecommendation(
                         recommended = rec,
                         current = songCooldownCount,
-                        rationale = "about the number of tracks cached per artist.",
-                        overshootNote = "Past that, some artists have no un-cooled tracks left, " +
-                            "so cooldown quietly relaxes for them.",
+                        rationale = "what your library sustains.",
+                        // Under the ceiling this is headroom, not a warning — lead with what the
+                        // library supports so a setting well inside budget doesn't read as an
+                        // overreach.
+                        headline = "Your $trackPoolSize tracks support up to $rec builds with " +
+                            "no song repeating — you're at $songCooldownCount.",
+                        overshootNote = "Past that there aren't enough distinct tracks, so the " +
+                            "last builds come up short rather than repeating a song.",
                         onApply = { viewModel.applyRecommendedSongCooldown() }
                     )
                 }
@@ -293,6 +339,40 @@ fun SettingsSheet(
             }
 
             // ── Auto-rebuild ─────────────────────────────────────────────────
+            // ── Liked Songs shuffle ──────────────────────────────────────────
+            SettingSection(title = "Liked Songs shuffle") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Explore artist catalogs",
+                            color = Color.White,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = "When you have no followed artists, also include top tracks " +
+                                "& saved album cuts (not just your liked songs)",
+                            color = SpotifyLightGray.copy(alpha = 0.6f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = exploreMode,
+                        onCheckedChange = { viewModel.setLikedSongsExploreMode(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = SpotifyGreen,
+                            uncheckedThumbColor = SpotifyLightGray,
+                            uncheckedTrackColor = SpotifyLightGray.copy(alpha = 0.3f)
+                        ),
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                }
+            }
+
             SettingSection(title = "Auto-rebuild") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -530,7 +610,9 @@ private fun CooldownRecommendation(
     current: Int,
     rationale: String,
     overshootNote: String,
-    onApply: () -> Unit
+    onApply: () -> Unit,
+    /** Overrides the default "Recommended: N — rationale" line when a tier wants its own wording. */
+    headline: String = "Recommended: $recommended — $rationale"
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
@@ -539,7 +621,7 @@ private fun CooldownRecommendation(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Recommended: $recommended — $rationale",
+                text = headline,
                 color = SpotifyLightGray.copy(alpha = 0.6f),
                 fontSize = 11.sp,
                 modifier = Modifier.weight(1f)

@@ -103,7 +103,8 @@ class PlaylistRebuildWorker(
                 market            = user.country,
                 cachedEntries     = cachedEntries,
                 rescanThresholdMs = rescanThresholdMs,
-                cachedLibraryPool = cachedLibraryPool
+                cachedLibraryPool = cachedLibraryPool,
+                likedSongsExploreMode = settings.likedSongsExploreMode
             )
             if (buildResult.newlyScanned.isNotEmpty()) {
                 gapArtistCache.save(cachedEntries + buildResult.newlyScanned)
@@ -117,7 +118,7 @@ class PlaylistRebuildWorker(
             val history           = historyStorage.load()
             val cooldownTrackIds  = historyStorage.getCooldownTrackIds(history.cooldownPlaylists, history)
             val recentArtistSets  = historyStorage.getRecentArtistSets(history.artistCooldownPlaylists, history)
-            val tracks   = shuffleEngine.buildPlaylist(
+            val shuffle  = shuffleEngine.buildPlaylist(
                 followedArtists   = library.followedArtists,
                 topArtistIds      = topArtistIds,
                 tracksByArtist    = buildResult.pool.tracksByArtist,
@@ -128,6 +129,11 @@ class PlaylistRebuildWorker(
                 discoveryBias     = settings.discoveryBias,
                 targetDurationMs  = settings.playlistDurationMs
             )
+            val tracks = shuffle.tracks
+            if (shuffle.shortOfTarget) {
+                Log.i(TAG, "Build came up short of target: ${tracks.size} tracks, " +
+                    "${shuffle.durationMs / 60_000} min — song cooldown left too few eligible tracks")
+            }
             if (tracks.isEmpty()) {
                 Log.w(TAG, "Shuffle produced no tracks — skipping"); return Result.success()
             }

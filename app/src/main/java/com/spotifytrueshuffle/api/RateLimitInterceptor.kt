@@ -3,6 +3,8 @@ package com.spotifytrueshuffle.api
 import android.util.Log
 import okhttp3.Interceptor
 import okhttp3.Response
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 private const val TAG = "RateLimit"
 
@@ -26,11 +28,31 @@ private const val MAX_RETRIES = 3
  * background dispatcher / a coroutine IO thread, never the main thread.
  */
 class RateLimitInterceptor : Interceptor {
+
+    /**
+     * Process-lifetime 429 tally. The caller flushes this into [com.spotifytrueshuffle.cache.AppSettings]
+     * after each build so a diagnostics export taken later still reports it — a stalled discovery
+     * scan is otherwise impossible to attribute from an export alone.
+     */
+    companion object Stats {
+        private val hits = AtomicInteger(0)
+        private val lastAtMs = AtomicLong(0L)
+
+        fun record() {
+            hits.incrementAndGet()
+            lastAtMs.set(System.currentTimeMillis())
+        }
+
+        /** Hits seen since process start, and when the most recent one landed (0 = never). */
+        fun snapshot(): Pair<Int, Long> = hits.get() to lastAtMs.get()
+    }
+
     override fun intercept(chain: Interceptor.Chain): Response {
         var response = chain.proceed(chain.request())
         var attempts = 0
 
         while (response.code == 429 && attempts < MAX_RETRIES) {
+            Stats.record()
             val retryAfter = response.header("Retry-After")?.toLongOrNull() ?: 1L
             if (retryAfter > MAX_RETRY_AFTER_SECONDS) {
                 Log.w(TAG, "429 Retry-After=${retryAfter}s exceeds cap — surfacing to caller")

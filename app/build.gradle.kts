@@ -11,7 +11,7 @@ android {
         applicationId = "com.appsbydan.trueshuffle"
         minSdk = 26
         targetSdk = 36
-        versionCode = 51
+        versionCode = 52
         versionName = "2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -87,4 +87,7 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // Local JVM unit tests — the shuffle engine is pure Kotlin, so it needs no device.
+    testImplementation("junit:junit:4.13.2")
 }
