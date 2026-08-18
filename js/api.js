@@ -1,8 +1,8 @@
 // api.js — Spotify Web API wrapper
 // All calls go directly from the browser to api.spotify.com (CORS supported).
 
-import { tokens, settings } from './storage.js?v=26';
-import { refreshAccessToken } from './auth.js?v=26';
+import { tokens, settings } from './storage.js?v=27';
+import { refreshAccessToken } from './auth.js?v=27';
 
 const BASE = 'https://api.spotify.com/v1';
 
