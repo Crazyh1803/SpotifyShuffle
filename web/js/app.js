@@ -1,12 +1,12 @@
 // app.js — Main application logic for True Shuffle Web
 // Orchestrates auth, API calls, track pool building, shuffle engine, and Spotify save.
 
-import { startAuth, getRedirectUri } from './auth.js?v=26';
+import { startAuth, getRedirectUri } from './auth.js?v=27';
 import { tokens, settings, gapCache, playlistId, history, artistLibrary, playlistLog,
-         clearAll, storageReport, GAP_TRACKS_PER_ARTIST } from './storage.js?v=26';
-import * as api from './api.js?v=26';
+         clearAll, storageReport, GAP_TRACKS_PER_ARTIST } from './storage.js?v=27';
+import * as api from './api.js?v=27';
 import { buildPlaylist, maxSustainableCooldown, maxSustainableSongCooldown, tierOf }
-    from './engine.js?v=26';
+    from './engine.js?v=27';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Rate limiting is handled globally inside apiFetch (350 ms between every call).
@@ -263,11 +263,23 @@ async function buildFlow() {
                     }
                 }
 
-                // Decide who still needs scanning
-                const unscanned = gapArtists.filter(a => !cache[a.id]);
-                const stale     = gapArtists.filter(a => cache[a.id]?.scannedAtMs === 0);
-                const toScan    = [...unscanned, ...stale].slice(0, MAX_GAP_BATCH);
-                console.log(`[gap] total=${gapArtists.length} unscanned=${unscanned.length} stale=${stale.length} toScan=${toScan.length}`);
+                // Decide who still needs scanning. Three distinct groups, in priority order:
+                //   never   — no cache entry at all
+                //   retry   — attempted but returned nothing usable (scannedAtMs left at 0)
+                //   ageing  — scanned successfully, but longer ago than the rescan interval
+                // Never/retry come first so first-time coverage always beats refreshing an
+                // artist we already have tracks for; ageing entries fill the rest of the batch.
+                const rescanDays = s.trackRescanIntervalDays ?? 30;
+                const rescanCutoff = rescanDays > 0 ? Date.now() - rescanDays * 86_400_000 : -Infinity;
+                const never  = gapArtists.filter(a => !cache[a.id]);
+                const retry  = gapArtists.filter(a => cache[a.id]?.scannedAtMs === 0);
+                const ageing = gapArtists.filter(a => {
+                    const at = cache[a.id]?.scannedAtMs;
+                    return at > 0 && at < rescanCutoff;
+                });
+                const toScan = [...never, ...retry, ...ageing].slice(0, MAX_GAP_BATCH);
+                console.log(`[gap] total=${gapArtists.length} never=${never.length} ` +
+                    `retry=${retry.length} ageing=${ageing.length} toScan=${toScan.length}`);
 
                 if (toScan.length > 0) {
                     setStatus(`Scanning ${toScan.length} artist${toScan.length === 1 ? '' : 's'} for deep cuts…`);
@@ -797,6 +809,22 @@ function loadSettingsUI() {
         });
     }
 
+    // Auto-rescan interval. 0 means manual only — the button below is then the only way
+    // cached deep cuts ever refresh.
+    const rescanEl  = document.getElementById('input-rescan-days');
+    const rescanVal = document.getElementById('rescan-days-value');
+    if (rescanEl) {
+        const fmtRescan = (d) => d === 0 ? 'Manual' : `${d} day${d === 1 ? '' : 's'}`;
+        const initial = s.trackRescanIntervalDays ?? 30;
+        rescanEl.value = initial;
+        if (rescanVal) rescanVal.textContent = fmtRescan(initial);
+        rescanEl.addEventListener('input', () => {
+            const v = parseInt(rescanEl.value, 10);
+            if (rescanVal) rescanVal.textContent = fmtRescan(v);
+            settings.save({ trackRescanIntervalDays: v });
+        });
+    }
+
     // Scan for new tracks (clears cache timestamps → next build rescans)
     const clearBtn = document.getElementById('btn-clear-cache');
     if (clearBtn) {
@@ -921,6 +949,9 @@ function exportDiagnostics() {
     const scanned   = entries.filter(e => e.scannedAtMs > 0).length;
     const empty     = entries.filter(e => e.scannedAtMs > 0 && (e.tracks || []).length === 0).length;
     const unscanned = entries.filter(e => e.scannedAtMs === 0).length;
+    const rescanDays   = s.trackRescanIntervalDays ?? 30;
+    const rescanCutoff = rescanDays > 0 ? Date.now() - rescanDays * 86_400_000 : -Infinity;
+    const stale     = entries.filter(e => e.scannedAtMs > 0 && e.scannedAtMs < rescanCutoff).length;
     const neverAttempted = Math.max(0, lib.followedArtists.length - entries.length);
     const progress  = window.__scanProgress ?? lib.lastScan;
 
@@ -945,6 +976,7 @@ function exportDiagnostics() {
         `Never attempted  : ${neverAttempted}  (no cache entry yet)`,
         `Scanned          : ${scanned}`,
         `  of which empty : ${empty}  (scanned but no accessible tracks)`,
+        `  of which stale : ${stale}  (older than rescan interval)`,
         `Unscanned (retry): ${unscanned}  (attempted but result was 0 timestamp)`,
         '',
         '--- Scan Progress ---',
@@ -959,6 +991,13 @@ function exportDiagnostics() {
         `Artist cooldown        : ${s.artistCooldownPlaylists} playlists`,
         `Playlist name          : ${settings.resolvedPlaylistName()}`,
         `Liked-songs explore    : ${s.likedSongsExploreMode ? 'On' : 'Off'}`,
+        `Track rescan interval  : ${rescanDays === 0 ? 'Manual' : `Every ${rescanDays} days`}`,
+        '',
+        '--- Cooldown History ---',
+        // Depth is what actually bounds the song cooldown: a setting of N against a shallower
+        // history silently behaves like the history depth.
+        `Stored playlists : ${history.get().playlists.length}  (cap 100)`,
+        `Track pool       : ${s.lastTrackPoolSize || 0}  (distinct tracks on the last build)`,
         '',
         '--- Browser ---',
         `User agent       : ${navigator.userAgent}`,

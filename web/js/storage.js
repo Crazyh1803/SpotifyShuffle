@@ -69,6 +69,15 @@ const SETTINGS_DEFAULTS = {
     lastArtistPoolSize: 0,
     /** Distinct tracks across the pool on the last build — drives the song-cooldown ceiling. */
     lastTrackPoolSize: 0,
+    /**
+     * How often gap-artist tracks are re-fetched automatically, in days.
+     * 0 = manual only (the "Scan for new tracks" button); 1–365 = entries older than this
+     * rejoin the scan queue on the next build, a few per build so the rate limit is respected.
+     *
+     * Without this a cached artist's deep cuts never change: the same handful of songs recycle
+     * for that artist forever, however much new music they release.
+     */
+    trackRescanIntervalDays: 30,
 };
 
 /** Used whenever the user hasn't set a name of their own. */
