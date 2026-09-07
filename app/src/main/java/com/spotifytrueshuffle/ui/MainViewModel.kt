@@ -25,7 +25,9 @@ import com.spotifytrueshuffle.cache.AppSettingsStorage
 import com.spotifytrueshuffle.cache.ArtistLibrary
 import com.spotifytrueshuffle.cache.ArtistTrackCache
 import com.spotifytrueshuffle.cache.GapArtistCache
+import com.spotifytrueshuffle.cache.GapArtistEntry
 import com.spotifytrueshuffle.cache.LibraryTrackCache
+import com.spotifytrueshuffle.cache.LibraryTrackPool
 import com.spotifytrueshuffle.cache.PlaylistLogStorage
 import com.spotifytrueshuffle.cache.buildPlaylistLogEntry
 import com.spotifytrueshuffle.cache.MAX_STORED
@@ -340,12 +342,15 @@ class MainViewModel(
      * cache. This is what bounds the song cooldown: it is a hard no-repeat rule, so the ceiling
      * is simply how many builds' worth of distinct tracks exist.
      */
-    private fun computeTrackPoolSize(): Int {
+    private fun computeTrackPoolSize(
+        libraryPool: LibraryTrackPool? = libraryTrackCache.load(),
+        gapEntries: Map<String, GapArtistEntry> = gapArtistCache.load()
+    ): Int {
         val ids = mutableSetOf<String>()
-        libraryTrackCache.load()?.tracksByArtist?.values?.forEach { list ->
+        libraryPool?.tracksByArtist?.values?.forEach { list ->
             list.forEach { ids.add(it.id) }
         }
-        gapArtistCache.load().values.forEach { entry -> entry.tracks.forEach { ids.add(it.id) } }
+        gapEntries.values.forEach { entry -> entry.tracks.forEach { ids.add(it.id) } }
         return ids.size
     }
 
@@ -464,8 +469,20 @@ class MainViewModel(
         val rescanMs     = if (settings.trackRescanIntervalDays == 0) Long.MAX_VALUE
                            else settings.trackRescanIntervalDays * 86_400_000L
 
-        val totalGapArtists = (library.followedArtists.size - cacheEntries.size)
-            .coerceAtLeast(0)  // artists with no cache entry at all (never attempted)
+        // Gap artists are followed artists with no coverage from sources 1-3 — the same
+        // definition buildTrackPool uses (its trackMap is keyed by primary artist, and the
+        // library cache mirrors that keying).
+        //
+        // This used to be `followedArtists.size - cacheEntries.size`, which counted every
+        // well-covered artist as "never attempted". On a library whose scan was genuinely
+        // complete it reported 149 pending, directly contradicting the Scan Progress section
+        // below. A null library cache means no build has run yet, so nothing is known.
+        val libraryPool    = libraryTrackCache.load()
+        val primaryCovered = libraryPool?.tracksByArtist?.keys
+        val gapArtistIds   = primaryCovered?.let { covered ->
+            library.followedArtists.map { it.id }.filter { it !in covered }
+        }
+        val neverAttempted = gapArtistIds?.count { it !in cacheEntries }
         val scannedCount   = cacheEntries.values.count { it.scannedAtMs > 0L }
         val emptyCount     = cacheEntries.values.count { it.scannedAtMs > 0L && it.tracks.isEmpty() }
         val staleCount     = cacheEntries.values.count { it.scannedAtMs > 0L && it.scannedAtMs < nowMs - rescanMs }
@@ -481,8 +498,9 @@ class MainViewModel(
             add("Last refreshed   : ${if (library.lastRefreshedMs == 0L) "never" else java.time.Instant.ofEpochMilli(library.lastRefreshedMs)}")
             add("")
             add("--- Gap Artist Cache ---")
-            add("Total entries    : ${cacheEntries.size}")
-            add("Never attempted  : $totalGapArtists  (no cache entry yet)")
+            add("Gap artists      : ${gapArtistIds?.size ?: "n/a"}  (followed, but nothing in your library)")
+            add("Cache entries    : ${cacheEntries.size}")
+            add("Never attempted  : ${neverAttempted ?: "n/a"}  (gap artists with no cache entry yet)")
             add("Scanned          : $scannedCount")
             add("  of which empty : $emptyCount  (scanned but no accessible tracks)")
             add("  of which stale : $staleCount  (older than rescan interval)")
@@ -511,7 +529,7 @@ class MainViewModel(
             // Depth is what actually bounds the song cooldown: a setting of 40 against a history
             // of 8 silently behaves like 8. Without this line that mismatch is invisible.
             add("Stored playlists : ${cooldownSettings.recentPlaylists.size}  (cap $MAX_STORED)")
-            add("Track pool       : ${computeTrackPoolSize()}  (distinct tracks across all caches)")
+            add("Track pool       : ${computeTrackPoolSize(libraryPool, cacheEntries)}  (distinct tracks across all caches)")
             add("Max song cooldown: ${computeMaxSustainableSongCooldown() ?: "n/a"}  (what the pool sustains)")
             add("")
             add("--- Rate Limiting ---")

@@ -409,6 +409,14 @@ class SpotifyRepository(
                                                     )
                                                     tracksPage.items
                                                         .filter { !it.isLocal && it.uri.startsWith("spotify:track:") }
+                                                        // Keep only tracks the followed artist actually performs on.
+                                                        // getArtistAlbums returns compilations and soundtracks the
+                                                        // artist appears on, and without this every other artist on
+                                                        // that album gets filed under them by addTrackForArtist —
+                                                        // so the shuffle can serve a track by someone the user has
+                                                        // never followed. Strategy 3 (search) already filters this
+                                                        // way; Strategy 1 did not.
+                                                        .filter { st -> st.artists.any { it.id == artistId } }
                                                         .forEach { st ->
                                                             found.add(Track(
                                                                 id = st.id,

@@ -11,7 +11,7 @@ android {
         applicationId = "com.appsbydan.trueshuffle"
         minSdk = 26
         targetSdk = 36
-        versionCode = 52
+        versionCode = 53
         versionName = "2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
