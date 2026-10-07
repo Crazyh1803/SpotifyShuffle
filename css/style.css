@@ -113,6 +113,21 @@ a:hover { text-decoration: underline; }
     transform: translateY(-1px);
 }
 
+/* Back-link to the Apps by Dan hub. Deliberately understated — it sits directly
+   under the tip button and shouldn't compete with it for attention. */
+.site-home-link {
+    display: inline-block;
+    margin-top: 12px;
+    color: var(--text-dim);
+    font-size: 12px;
+    text-decoration: none;
+    transition: color var(--transition);
+}
+.site-home-link:hover {
+    color: var(--text-muted);
+    text-decoration: underline;
+}
+
 /* ── Cards ───────────────────────────────────────────────────────────────────── */
 .card {
     background: var(--surface);
