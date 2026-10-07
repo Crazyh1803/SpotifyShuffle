@@ -122,6 +122,17 @@
 
     .note strong { color: #e0e0e0; }
 
+    /* Back-link to the Apps by Dan hub, matching the muted tone used above. */
+    .site-home-link {
+      display: block;
+      text-align: center;
+      margin: 28px 0 8px;
+      color: #666;
+      font-size: 12px;
+      text-decoration: none;
+    }
+    .site-home-link:hover { color: #a0a0a0; text-decoration: underline; }
+
     .link {
       color: #1db954;
       text-decoration: none;
@@ -218,9 +229,11 @@
     </div>
   </div>
 
+  <a href="https://crazyh1803.github.io/AppsByDan/index.html" class="site-home-link">← More apps by Dan</a>
+
   <script type="module">
     // Dynamically show the correct redirect URI for this deployment
-    import { getRedirectUri } from './js/auth.js?v=27';
+    import { getRedirectUri } from './js/auth.js?v=28';
     const el = document.getElementById('redirect-uri-display');
     if (el) {
       const uri = getRedirectUri();
